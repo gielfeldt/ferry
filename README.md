@@ -154,12 +154,18 @@ even when your clone has diverged.
 
 ## Completion
 
-```sh
-# bash
-source /path/to/ferry/completions/ferry.bash
+`install.sh` sets this up for you:
 
-# zsh, after compinit
-source /path/to/ferry/completions/ferry.zsh
+```
+bash completion -> ~/.local/share/bash-completion/completions/ferry
+zsh completion  -> ~/.local/share/zsh/site-functions/_ferry
+```
+
+bash picks that up on its own. zsh needs the directory on its `fpath`, before
+`compinit`:
+
+```sh
+fpath=(~/.local/share/zsh/site-functions $fpath)
 ```
 
 Completes commands, each command's flags, and store references — so
