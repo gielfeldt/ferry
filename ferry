@@ -1,11 +1,7 @@
 #!/usr/bin/env python3
 """ferry - carry Claude Code sessions between machines, using a git repo.
 
-    ferry repo add mine git@github.com:you/my-sessions.git --key ~/my-sessions.key
-    ferry save bug-hunt as mine:acme        # -> acme/bug-hunt.jsonl
-    ferry load mine:acme/bug-hunt
-
-save copies a transcript out of ~/.claude/projects/<cwd>/ into the repo and
+save copies a transcript out of ~/.claude/projects/<cwd>/ into a store and
 pushes. load pulls and copies it back. That is the whole idea - scp with a git
 repo in the middle. Nothing runs on its own, nothing is linked, nothing is
 watched: it does exactly what you type, when you type it.
@@ -84,11 +80,11 @@ def repo_dir(alias):
     r = repos().get(alias)
     if not r:
         known = ", ".join(sorted(repos())) or "none yet"
-        die(f"unknown repo '{alias}' (have: {known})\n"
-            f"       ferry repo add {alias} <git-url>")
+        die(f"unknown store '{alias}' (have: {known})\n"
+            f"       ferry add {alias} <git-url>")
     p = Path(r["path"])
     if not p.is_dir():
-        die(f"{p} is gone - re-add it:  ferry repo add {alias} {r.get('url','')}")
+        die(f"{p} is gone - re-add it:  ferry add {alias} {r.get('url','')}")
     return p
 
 
@@ -101,21 +97,21 @@ def git(repo, *args, check=True):
 
 
 def split_ref(ref, directory=False):
-    """'mine:acme/bug-hunt' -> ('mine', 'acme/bug-hunt').
+    """'work:acme/bug-hunt' -> ('work', 'acme/bug-hunt').
 
     With directory=True the path names a folder to put something in, and may
-    be empty - `mine:` means the top of the repo.
+    be empty - `work:` means the top of the store.
     """
     if ":" not in ref:
-        die(f"'{ref}' should look like <repo>:<path>, e.g. mine:acme"
+        die(f"'{ref}' should look like <store>:<dir>, e.g. work:acme"
             if directory else
-            f"'{ref}' should look like <repo>:<path>, e.g. mine:acme/bug-hunt")
+            f"'{ref}' should look like <store>:<path>, e.g. work:acme/bug-hunt")
     alias, _, path = ref.partition(":")
     path = path.strip("/")
     if path.startswith(".") or ".." in path.split("/"):
         die(f"bad path in '{ref}'")
     if not path and not directory:
-        die(f"'{ref}' needs a path, e.g. mine:acme/bug-hunt")
+        die(f"'{ref}' needs a path, e.g. work:acme/bug-hunt")
     return alias, path
 
 
@@ -314,8 +310,8 @@ def commit_push(repo, message, paths):
 
 # ------------------------------------------------------------------ commands
 
-def cmd_repo_add(args):
-    alias = args.alias
+def cmd_add(args):
+    alias = args.name
     if not re.fullmatch(r"[A-Za-z0-9._-]+", alias):
         die("a repo alias may hold letters, digits, dot, dash and underscore")
     path = Path(args.path).expanduser().resolve() if args.path else \
@@ -355,14 +351,14 @@ def cmd_repo_add(args):
             print(f"  unlocked with {key}")
     elif not encrypted(path):
         print(f"  locked or unencrypted. If it has a key:  "
-              f"ferry repo add {alias} --path {path} --key <file>")
+              f"ferry add {alias} --path {path} --key <file>")
         print(f"  to encrypt it for the first time:  cd {path} && git-crypt init")
 
 
-def cmd_repo_list(args):
+def cmd_stores(args):
     d = repos()
     if not d:
-        print("no repos yet:  ferry repo add mine <git-url>")
+        print("no stores yet:  ferry add <name> <git-url>")
     for alias in sorted(d):
         p = Path(d[alias]["path"])
         state = "" if p.is_dir() else "  MISSING"
@@ -377,12 +373,25 @@ def cmd_save(args):
     the repo is what you called it here. That keeps one name for one session
     across every machine, and makes the check below meaningful.
     """
-    alias, path = split_ref(args.target, directory=True)
+    # "to" is noise for the parser but reads better for you, so drop it here
+    # rather than letting it be mistaken for a session name.
+    words = [w for w in args.words if w != "to"]
+    if args.memory:
+        if len(words) != 1:
+            die(f"expected one <store>:<dir>, got: {' '.join(words)}")
+        args.session, target = None, words[0]
+    else:
+        if len(words) != 2:
+            die("give a session and a destination, e.g.\n"
+                "       ferry save bug-hunt to work:acme\n"
+                "       ferry save --memory to work:acme")
+        args.session, target = words
+    alias, path = split_ref(target, directory=True)
     repo, here = repo_dir(alias), slug_dir()
     check_encryption(repo, alias, args.allow_plaintext)
     pull(repo)
 
-    if args.session == "memory":
+    if args.memory:
         src = here / "memory"
         if not src.is_dir() or not any(src.glob("*.md")):
             die(f"no memory for this directory ({src})")
@@ -429,12 +438,20 @@ def cmd_save(args):
 
 
 def cmd_load(args):
-    alias, path = split_ref(args.target)
+    """Copy a session, or a directory's memory, out of a store and into here.
+
+    --memory decides which, rather than guessing from what happens to exist:
+    a store can hold both acme/memory.jsonl and acme/memory/ at once.
+    """
+    alias, path = split_ref(args.target, directory=args.memory)
     repo, here = repo_dir(alias), slug_dir()
     pull(repo)
 
-    jsonl, mem = repo / f"{path}.jsonl", repo / path
-    if not jsonl.exists() and mem.is_dir():
+    if args.memory:
+        leaf = f"{path}/memory" if path else "memory"
+        mem = repo / leaf
+        if not mem.is_dir():
+            die(f"no memory at {alias}:{leaf}")
         dest = here / "memory"
         # Claude Code creates an empty memory/ for every directory, so only an
         # existing one that actually holds notes is worth protecting.
@@ -444,10 +461,11 @@ def cmd_load(args):
         here.mkdir(parents=True, exist_ok=True)
         shutil.rmtree(dest, ignore_errors=True)
         shutil.copytree(mem, dest)
-        print(f"loaded memory {alias}:{path} -> {dest}  "
+        print(f"loaded memory {alias}:{leaf} -> {dest}  "
               f"({len(list(dest.rglob('*.md')))} file(s))")
         return
 
+    jsonl = repo / f"{path}.jsonl"
     if not jsonl.exists():
         die(f"nothing at {alias}:{path}")
     # The transcript carries its own identity, so nothing beside it is needed.
@@ -469,7 +487,7 @@ def cmd_load(args):
 
 def cmd_list(args):
     if not args.ref:
-        return cmd_repo_list(args)
+        die("which store?  ferry stores")
     alias, _, path = args.ref.partition(":")
     repo = repo_dir(alias)
     # Fetch but never merge. Listing has to see what another machine saved, yet
@@ -501,9 +519,9 @@ def cmd_list(args):
 
 def cmd_update(args):
     """Bring a clone up to date, and explain it if that is not possible."""
-    aliases = [args.alias] if args.alias else sorted(repos())
+    aliases = [args.name] if args.name else sorted(repos())
     if not aliases:
-        die("no repos yet:  ferry repo add mine <git-url>")
+        die("no stores yet:  ferry add <name> <git-url>")
 
     for alias in aliases:
         repo = repo_dir(alias)
@@ -593,71 +611,115 @@ def cmd_sessions(args):
     n = len(list((here / "memory").glob("*.md"))) if (here / "memory").is_dir() else 0
     if n:
         print(f"  {'memory':<36}  {'':10}  {n:6} md   "
-              f"(ferry save memory as <repo>:<dir>)")
+              f"(ferry save --memory to <store>:<dir>)")
     if any(r[3].startswith("* ") for r in rows):
         print("\n  * Claude's own title, not a name - /rename it before saving")
 
 
+USAGE = """\
+  ferry add <name> <git-url> [--key <file>] [--path <dir>]
+  ferry stores
+  ferry sessions
+  ferry memory
+  ferry save <session> [to] <store>:<dir> [--force]
+  ferry save --memory [to] <store>:<dir> [--force]
+  ferry load <store>:<path> [--force]
+  ferry load --memory <store>:<dir> [--force]
+  ferry list [<store>[:<path>]]
+  ferry update [<store>]\
+"""
+
+EXAMPLES = """\
+examples:
+  register a store, once per machine
+    ferry add work git@github.com:you/sessions.git --key ~/sessions.key
+    ferry add work --path ~/develop/sessions      adopt a checkout you have
+    ferry stores
+
+  what have I got here
+    ferry sessions
+    ferry memory
+
+  send it
+    ferry save bug-hunt to work:acme              -> acme/bug-hunt.jsonl
+    ferry save --memory to work:acme              -> acme/memory/
+
+  fetch it on the other machine
+    ferry list work
+    ferry load work:acme/bug-hunt                 a session
+    ferry load --memory work:acme                 that folder's memory
+    ferry update work
+
+A session is filed under its own name, so you give a directory and ferry names
+the file. Loading picks one out again, so there you give the whole path.\
+"""
+
+
 def main():
-    ap = argparse.ArgumentParser(prog="ferry", description=__doc__,
-                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap = argparse.ArgumentParser(
+        prog="ferry", usage="\n" + USAGE, description=__doc__, epilog=EXAMPLES,
+        formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--version", action="version", version=f"ferry {__version__}")
     # Not required: bare `ferry` should show the help rather than an error.
     sub = ap.add_subparsers(dest="cmd", metavar="<command>")
 
-    p = sub.add_parser("repo", help="the git repos you carry sessions to")
-    ps = p.add_subparsers(dest="sub", required=True, metavar="<command>")
-    q = ps.add_parser("add", help="register a repo")
-    q.add_argument("alias")
-    q.add_argument("url", nargs="?")
-    q.add_argument("--path", help="use a checkout you already have")
-    q.add_argument("--key", metavar="FILE",
+    p = sub.add_parser("add", help="register a store")
+    p.add_argument("name", metavar="<name>")
+    p.add_argument("url", nargs="?", metavar="<git-url>")
+    p.add_argument("--path", metavar="<dir>",
+                   help="adopt a checkout you already have")
+    p.add_argument("--key", metavar="<file>",
                    help="git-crypt key to unlock it with")
-    q.set_defaults(func=cmd_repo_add)
-    q = ps.add_parser("list", help="show registered repos")
-    q.set_defaults(func=cmd_repo_list)
+    p.set_defaults(func=cmd_add)
 
-    p = sub.add_parser("save", help="copy a session (or memory) into a repo")
-    p.add_argument("session", metavar="<name|id|memory>")
-    p.add_argument("target", metavar="[as] <repo>:<dir>", nargs="+")
-    p.add_argument("--force", action="store_true",
-                   help="overwrite even if the repo copy is longer")
-    p.add_argument("--allow-plaintext", action="store_true",
-                   help="commit even though the repo has no git-crypt")
-    p.set_defaults(func=cmd_save)
+    p = sub.add_parser("stores", help="the stores registered here")
+    p.set_defaults(func=cmd_stores)
 
-    p = sub.add_parser("load", help="copy a session (or memory) into this directory")
-    p.add_argument("target", metavar="<repo>:<path>", nargs="+")
-    p.add_argument("--name", help="the name to suggest restoring")
-    p.add_argument("--force", action="store_true",
-                   help="overwrite even if the local copy is longer")
-    p.set_defaults(func=cmd_load)
-
-    p = sub.add_parser("list", help="what is in a repo")
-    p.add_argument("ref", nargs="?", metavar="[<repo>[:<path>]]")
-    p.set_defaults(func=cmd_list)
-
-    p = sub.add_parser("update", help="pull a repo up to date")
-    p.add_argument("alias", nargs="?", help="one repo, or all of them")
-    p.set_defaults(func=cmd_update)
-
-    p = sub.add_parser("sessions", help="what is in this directory")
+    p = sub.add_parser("sessions", help="sessions in this directory")
     p.set_defaults(func=cmd_sessions)
 
     p = sub.add_parser("memory", help="what this directory remembers")
     p.set_defaults(func=cmd_memory)
+
+    p = sub.add_parser("save", help="copy a session or memory into a store")
+    p.add_argument("words", nargs="+", metavar="<session> [to] <store>:<dir>")
+    p.add_argument("--memory", action="store_true",
+                   help="this directory's memory, not a session")
+    p.add_argument("--force", action="store_true",
+                   help="overwrite even if the stored copy is longer")
+    p.add_argument("--allow-plaintext", action="store_true",
+                   help="commit even though the store has no git-crypt")
+    p.set_defaults(func=cmd_save)
+
+    p = sub.add_parser("load", help="copy a session or memory into this directory")
+    p.add_argument("target", metavar="<store>:<path>", nargs="+")
+    p.add_argument("--memory", action="store_true",
+                   help="memory from <store>:<dir>, not a session")
+    p.add_argument("--name", metavar="<name>",
+                   help="the name to suggest restoring")
+    p.add_argument("--force", action="store_true",
+                   help="overwrite even if the local copy is longer")
+    p.set_defaults(func=cmd_load)
+
+    p = sub.add_parser("list", help="what a store holds")
+    p.add_argument("ref", nargs="?", metavar="<store>[:<path>]")
+    p.set_defaults(func=cmd_list)
+
+    p = sub.add_parser("update", help="pull a store up to date")
+    p.add_argument("name", nargs="?", metavar="<store>")
+    p.set_defaults(func=cmd_update)
 
     args = ap.parse_args()
     if not args.cmd:
         ap.print_help()
         return
 
-    # `save X as repo:path` reads better than `save X repo:path`, so the word
-    # "as" is allowed and simply ignored.
+    # `save X to store:dir` reads better than `save X store:dir`, so the word
+    # "to" is allowed and simply dropped.
     if isinstance(getattr(args, "target", None), list):
-        words = [w for w in args.target if w != "as"]
+        words = [w for w in args.target if w != "to"]
         if len(words) != 1:
-            die(f"expected one <repo>:<path>, got: {' '.join(args.target)}")
+            die(f"expected one <store>:<path>, got: {' '.join(args.target)}")
         args.target = words[0]
 
     args.func(args)

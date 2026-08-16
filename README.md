@@ -27,7 +27,7 @@ Needs python3 and git. Nothing else.
 
 ## Setup
 
-Make a **private** repo for the sessions themselves — separate from this one —
+Make a **private** repo for the sessions themselves — the *store* — separate from this one —
 and encrypt it, because transcripts are conversations:
 
 ```sh
@@ -39,29 +39,57 @@ Put that key somewhere safe. Without it the repo is unreadable. Then register it
 on each machine:
 
 ```sh
-ferry repo add mine git@github.com:you/my-sessions.git --key ~/my-sessions.key
+ferry add work git@github.com:you/my-sessions.git --key ~/my-sessions.key
 ```
 
-`--key` clones the repo and hands the key to `git-crypt unlock`. ferry stores no
+`--key` clones the store and hands the key to `git-crypt unlock`. ferry stores no
 keys of its own — without it, a fresh clone stays locked and every save is
 refused.
 
-ferry refuses to save into a repo that has no git-crypt, unless you pass
+ferry refuses to save into a store that has no git-crypt, unless you pass
 `--allow-plaintext`.
 
 ## Using it
 
 ```sh
-ferry sessions                                  # sessions in this directory
-ferry memory                                    # what this directory remembers
-ferry save <name> as <repo>:<dir>               # -> <dir>/<name>.jsonl
-ferry save memory as <repo>:<dir>               # -> <dir>/memory/
-ferry load <repo>:<path>                        # copy it back, here
-ferry list [<repo>[:<path>]]                    # what a repo holds
-ferry update [<repo>]                           # pull it up to date
-ferry repo add <alias> <git-url> [--key FILE] [--path DIR]
-ferry repo list
+ferry add <name> <git-url> [--key <file>] [--path <dir>]
+ferry stores
+ferry sessions
+ferry memory
+ferry save <session> [to] <store>:<dir> [--force]
+ferry save --memory [to] <store>:<dir> [--force]
+ferry load <store>:<path> [--force]
+ferry load --memory <store>:<dir> [--force]
+ferry list [<store>[:<path>]]
+ferry update [<store>]
 ```
+
+```sh
+# register a store, once per machine
+ferry add work git@github.com:you/sessions.git --key ~/sessions.key
+ferry add work --path ~/develop/sessions      # adopt a checkout you have
+ferry stores
+
+# what have I got here
+ferry sessions
+ferry memory
+
+# send it
+ferry save bug-hunt to work:acme              # -> acme/bug-hunt.jsonl
+ferry save --memory to work:acme              # -> acme/memory/
+
+# fetch it on the other machine
+ferry list work
+ferry load work:acme/bug-hunt                 # a session
+ferry load --memory work:acme                 # that folder's memory
+ferry update work
+```
+
+A session is filed under its own name, so `save` takes a **directory** and ferry
+names the file. `load` is picking one out again, so there you give the whole
+path. `--memory` takes a directory in both, since its leaf is always `memory` —
+and being a flag, it never collides with a session that happens to be called
+`memory`.
 
 `save` and `load` both act on **the directory you are standing in**, because
 that is what decides which `~/.claude/projects/` folder Claude uses.
@@ -104,7 +132,7 @@ since the newcomer is usually bigger.
 replace a longer file with a shorter one, ferry stops — that is the shape of
 "I forgot to load first and clobbered yesterday's work". `--force` if you mean it.
 
-## Layout in the repo
+## Layout in the store
 
 ```
 acme/bug-hunt.jsonl     a transcript - the filename is its name
