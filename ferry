@@ -21,7 +21,6 @@ __version__ = "1.0.0"
 CONFIG = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config") / "ferry"
 CONFIG_FILE = CONFIG / "repos.json"
 CLAUDE_PROJECTS = Path.home() / ".claude" / "projects"
-HISTORY = Path.home() / ".claude" / "history.jsonl"
 SLUG_MAX = 200
 
 
@@ -117,27 +116,43 @@ def split_ref(ref, directory=False):
 
 # ------------------------------------------------------------------ sessions
 
-def session_name_map():
-    """name -> session id, from ~/.claude/history.jsonl.
+def session_name(jsonl):
+    """The name a session answers to, read out of its own transcript.
 
-    A session's /rename name is not stored in its transcript; this file is the
-    only record of it. Later renames win.
+    Claude Code writes {"type":"custom-title","customTitle":...} whenever the
+    name is set - by /rename, by /branch, or by `claude -n` at launch - and
+    rewrites it as the session goes on, so the last one is current.
+
+    Reading it here rather than from ~/.claude/history.jsonl is what makes a
+    loaded session usable: history is machine-local and does not travel, while
+    the transcript is the thing ferry copies.
     """
-    names = {}
+    name = None
     try:
-        with HISTORY.open(errors="replace") as fh:
+        with jsonl.open(errors="replace") as fh:
             for line in fh:
+                if '"custom-title"' not in line:
+                    continue
                 try:
                     o = json.loads(line)
                 except json.JSONDecodeError:
                     continue
-                m = re.match(r"^/rename\s+(\S+)",
-                             (o.get("display") or "").strip())
-                if m and o.get("sessionId"):
-                    names[m.group(1)] = o["sessionId"]
+                if o.get("type") == "custom-title" and o.get("customTitle"):
+                    name = o["customTitle"]
     except OSError:
         pass
-    return names
+    return name
+
+
+def names_here(where):
+    """name -> transcript, for every named session in a directory."""
+    out = {}
+    if where.is_dir():
+        for f in where.glob("*.jsonl"):
+            n = session_name(f)
+            if n:
+                out[n] = f
+    return out
 
 
 def find_session(spec, where):
@@ -146,9 +161,9 @@ def find_session(spec, where):
         die(f"no sessions for this directory yet ({where})")
     here = {f.stem: f for f in where.glob("*.jsonl")}
 
-    sid = session_name_map().get(spec)
-    if sid and sid in here:
-        return here[sid]
+    named = names_here(where)
+    if spec in named:
+        return named[spec]
 
     hits = [f for s, f in here.items() if s.startswith(spec)]
     if len(hits) == 1:
@@ -156,9 +171,6 @@ def find_session(spec, where):
     if len(hits) > 1:
         die(f"'{spec}' matches {len(hits)} sessions here - use a longer id")
 
-    if sid:
-        die(f"'{spec}' is session {sid[:8]}, but it is not in {where}\n"
-            f"       cd to the directory it was started in")
     die(f"no session called '{spec}' here. Try:  ferry sessions")
 
 
@@ -415,7 +427,7 @@ def cmd_save(args):
         return
 
     src = find_session(args.session, here)
-    name = {v: k for k, v in session_name_map().items()}.get(src.stem)
+    name = session_name(src)
     if not name:
         title = ai_title(src)
         die(f"{src.stem[:8]} has no name, and the name is what it would be "
@@ -600,13 +612,12 @@ def cmd_sessions(args):
     if not here.is_dir():
         print(f"no sessions for {Path.cwd()}")
         return
-    by_id = {v: k for k, v in session_name_map().items()}
     rows = []
     for f in here.glob("*.jsonl"):
-        # Your own /rename name if there is one; otherwise the title Claude
-        # gave it, marked with * so the two are never confused - only the
-        # unmarked ones can be used as a name in `ferry save`.
-        name = by_id.get(f.stem, "")
+        # The name you gave it if it has one; otherwise the title Claude made
+        # up, marked with * so the two are never confused - only the unmarked
+        # ones can be used as a name in `ferry save`.
+        name = session_name(f) or ""
         if not name:
             title = ai_title(f)
             name = f"* {title}" if title else ""

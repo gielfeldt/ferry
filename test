@@ -143,6 +143,27 @@ class TranscriptFields(unittest.TestCase):
         p = tmpfile('not json at all\n{"sessionId":"abc-123"}\n')
         self.assertEqual(f.session_id_of(p), "abc-123")
 
+    def test_finds_the_session_name(self):
+        p = tmpfile('{"type":"mode"}\n'
+                    '{"type":"custom-title","customTitle":"bug-hunt"}\n')
+        self.assertEqual(f.session_name(p), "bug-hunt")
+
+    def test_the_last_name_wins(self):
+        p = tmpfile('{"type":"custom-title","customTitle":"first"}\n'
+                    '{"type":"custom-title","customTitle":"second"}\n')
+        self.assertEqual(f.session_name(p), "second")
+
+    def test_an_unnamed_session_has_no_name(self):
+        self.assertIsNone(f.session_name(tmpfile('{"type":"mode"}\n')))
+
+    def test_a_branch_argument_is_not_this_sessions_name(self):
+        """A /branch names the child; only custom-title names this one."""
+        p = tmpfile('{"type":"system","subtype":"local_command","content":'
+                    '"<command-name>/branch</command-name><command-args>'
+                    'child-name</command-args>"}\n'
+                    '{"type":"custom-title","customTitle":"my-name"}\n')
+        self.assertEqual(f.session_name(p), "my-name")
+
     def test_finds_the_ai_title(self):
         p = tmpfile('{"a":1}\n{"aiTitle":"Fix the parser"}\n')
         self.assertEqual(f.ai_title(p), "Fix the parser")
