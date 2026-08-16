@@ -499,10 +499,10 @@ def cmd_load(args):
     shutil.copyfile(jsonl, dest)
     print(f"loaded {alias}:{path} -> {dest.name[:8]}  "
           f"({dest.stat().st_size/1e6:.1f} MB)")
-    print(f"  resume it here with:  claude --resume {sid}")
-    # The name is the leaf of the path you chose when saving.
-    name = args.name or path.rsplit("/", 1)[-1]
-    print(f"  to call it that here:  /rename {name}")
+    # The name travels inside the transcript, so it is already this session's
+    # name here - no rename needed, and --resume takes it as readily as an id.
+    name = args.name or session_name(dest) or sid
+    print(f"  resume it here with:  claude --resume {name}")
 
 
 def cmd_list(args):
