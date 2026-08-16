@@ -2,20 +2,19 @@
 
 Carry Claude Code sessions between machines, using a git repo you control.
 
+Claude Code keeps each conversation as a transcript on the machine it ran on.
+ferry copies one into an encrypted git repo — a **store** — and back out again
+somewhere else, so you can start work on one laptop and pick it up on another.
+Memory travels the same way.
+
 ```sh
 # on the laptop that has the session
-ferry save bug-hunt as mine:acme/bug-hunt
+ferry save bug-hunt to work:acme
 
 # on the other one
-ferry load mine:acme/bug-hunt
+ferry load work:acme/bug-hunt
+claude --resume 3f9a1c2e-…
 ```
-
-`save` copies a transcript out of `~/.claude/projects/<this directory>/` into
-the repo, commits and pushes. `load` pulls and copies it back. That is the whole
-idea — `scp` with a git repo in the middle.
-
-**Nothing runs on its own.** No hooks, no symlinks, no background sync, no
-watching. ferry does exactly what you type, when you type it.
 
 ## Install
 
@@ -23,35 +22,39 @@ watching. ferry does exactly what you type, when you type it.
 curl -fsSL https://raw.githubusercontent.com/gielfeldt/ferry/main/install.sh | sh
 ```
 
-Needs python3 and git. Nothing else.
+Needs python3 and git. Nothing else — no packages, no runtime, no daemon.
+Or just drop the single `ferry` file anywhere on your `PATH`.
 
-## Setup
+## Quick start
 
-Make a **private** repo for the sessions themselves — the *store* — separate from this one —
-and encrypt it, because transcripts are conversations:
+You need a **private** git repo to hold the sessions, encrypted, because
+transcripts are conversations. Create one, then:
 
 ```sh
-git clone git@github.com:you/my-sessions.git
-cd my-sessions && git-crypt init && git-crypt export-key ~/my-sessions.key
+# turn it into an encrypted store, once ever
+git clone git@github.com:you/sessions.git
+cd sessions
+printf '*  filter=git-crypt diff=git-crypt\n.gitattributes !filter !diff\n' > .gitattributes
+git-crypt init
+git add .gitattributes && git commit -m "encrypt everything" && git push
+git-crypt export-key ~/sessions.key      # keep this safe - it is the only key
+
+# register it, once per machine
+ferry add work git@github.com:you/sessions.git --key ~/sessions.key
+
+# use it
+cd ~/develop/acme
+ferry sessions                           # what can I send?
+ferry save bug-hunt to work:acme
 ```
 
-Put that key somewhere safe. Without it the repo is unreadable. Then register it
-on each machine:
+`--key` hands your key to `git-crypt unlock`; ferry stores no keys itself.
+Encrypting `*` means no path in the store can be committed in the clear by
+accident.
 
-```sh
-ferry add work git@github.com:you/my-sessions.git --key ~/my-sessions.key
+## Usage
+
 ```
-
-`--key` clones the store and hands the key to `git-crypt unlock`. ferry stores no
-keys of its own — without it, a fresh clone stays locked and every save is
-refused.
-
-ferry refuses to save into a store that has no git-crypt, unless you pass
-`--allow-plaintext`.
-
-## Using it
-
-```sh
 ferry add <name> <git-url> [--key <file>] [--path <dir>]
 ferry stores
 ferry sessions
@@ -65,79 +68,98 @@ ferry update [<store>]
 ```
 
 ```sh
-# register a store, once per machine
 ferry add work git@github.com:you/sessions.git --key ~/sessions.key
 ferry add work --path ~/develop/sessions      # adopt a checkout you have
 ferry stores
 
-# what have I got here
-ferry sessions
-ferry memory
+ferry sessions                                # sessions in this directory
+ferry memory                                  # notes in this directory
 
-# send it
 ferry save bug-hunt to work:acme              # -> acme/bug-hunt.jsonl
 ferry save --memory to work:acme              # -> acme/memory/
 
-# fetch it on the other machine
 ferry list work
 ferry load work:acme/bug-hunt                 # a session
 ferry load --memory work:acme                 # that folder's memory
-ferry update work
+ferry update work                             # pull, and explain a divergence
 ```
 
-A session is filed under its own name, so `save` takes a **directory** and ferry
-names the file. `load` is picking one out again, so there you give the whole
-path. `--memory` takes a directory in both, since its leaf is always `memory` —
-and being a flag, it never collides with a session that happens to be called
-`memory`.
+[COOKBOOK.md](COOKBOOK.md) works through the situations you will actually hit.
 
-`save` and `load` both act on **the directory you are standing in**, because
-that is what decides which `~/.claude/projects/` folder Claude uses.
+## Concepts
 
-## Who touches git, and when
+**Everything is relative to the directory you are standing in.** Claude Code
+files transcripts by working directory, so `sessions`, `save` and `load` all act
+on the current one. `cd` to where you were working.
 
-| | fetches | changes your clone | pushes |
-|---|---|---|---|
-| `save` | yes | fast-forwards first | yes |
-| `load` | yes | fast-forwards first | no |
-| `list` | yes | **no** | no |
-| `update` | yes | fast-forwards | no |
+**A session is filed under its own name.** `save` takes a *directory* and names
+the file after the session, so one conversation has one name on every machine.
+Names come from `/rename` and live only in `~/.claude/history.jsonl` — never in
+the transcript — so a session with no name cannot be saved, and a loaded one
+arrives unnamed until you `/rename` it. `load` prints the command for that.
 
-`list` fetches but never merges, so it always shows what is really on the
-remote and can tell you how far behind you are — without ever being the command
-that fails. `update` is the one that moves your clone.
+**`load` takes a whole path**, because there you are choosing among what the
+store holds rather than deciding where something goes.
 
-ferry never merges. If your clone and the remote have both moved, `update` says
-so and shows you the two ways out (`git rebase` or `git reset --hard`), and
-leaves the choice to you. Your sessions in `~/.claude` are untouched by any of
-it; the worst case is saving them again.
+**Memory belongs to a directory, not a session.** Claude keeps it in
+`memory/*.md` beside the transcripts, shared by everything started there.
+`--memory` is a flag rather than a name, so it can never be confused with a
+session that happens to be called `memory`.
 
-## Two things worth knowing
+**A store is a plain git repo.** ferry only fast-forwards; it never merges.
 
-**A session is filed under its own name.** You give `save` a directory, not a
-filename — `ferry save bug-hunt as mine:acme` writes `acme/bug-hunt.jsonl`. One
-session therefore has one name everywhere, and ferry refuses to save a session
-that has no name, because there would be nothing to call it.
+## What it protects you from
 
-Names live only in `~/.claude/history.jsonl`, never in the transcript, so a
-loaded session arrives unnamed on the other machine; `load` prints the
-`/rename` that restores it.
+| | |
+|---|---|
+| a shorter copy overwriting a longer one | refused — transcripts only grow, so that means lost turns |
+| a different session overwriting a name | refused — the id inside the file is checked, not just the path |
+| committing transcripts unencrypted | refused unless `--allow-plaintext` |
+| overwriting memory that already has notes | refused without `--force` |
+| a diverged clone | reported by `update`, which explains the two ways out |
 
-**One name, one session.** If the target already holds a transcript with a
-different session id inside, `save` refuses rather than replacing a
-conversation with an unrelated one — a failure the size check cannot catch,
-since the newcomer is usually bigger.
+`--force` overrides the first four, when you mean it.
 
-**Copies never shrink.** Transcripts only grow, so if a `save` or `load` would
-replace a longer file with a shorter one, ferry stops — that is the shape of
-"I forgot to load first and clobbered yesterday's work". `--force` if you mean it.
+## How it works
 
-## Layout in the store
+Claude Code stores transcripts in `~/.claude/projects/<slug>/`, where `<slug>`
+is the directory's absolute path with every non-alphanumeric character replaced
+by `-`, truncated to 200 characters plus a hash if longer. ferry computes the
+same name, copies the `.jsonl` out or in, and commits.
+
+In the store:
 
 ```
 acme/bug-hunt.jsonl     a transcript - the filename is its name
-personal/notes/         a memory directory, as .md files
+acme/memory/            a memory directory, as .md files
 ```
 
-Plain files in plain directories. You can read it, move things around with `mv`,
-and delete what you no longer want, without ferry's help.
+Plain files in plain directories. You can rearrange them with `mv` and delete
+them with `rm`, without ferry's help.
+
+Only `save` writes to the remote. `load`, `list` and `update` never push, and
+`list` fetches without merging so it can always show what is really there,
+even when your clone has diverged.
+
+## Limitations
+
+- **Copies, not sync.** Saving replaces the store's copy with yours; loading
+  replaces yours with the store's. No merging, and nothing happens on its own.
+- **Memory is replaced wholesale**, so notes that exist only on the other
+  machine are lost when you save over them.
+- **Collisions are caught, not resolved.** ferry stops and tells you.
+- **Session names are local.** Loading can only suggest a name, not set one.
+- **git-crypt hides contents, not names.** Directory and file names, sizes and
+  commit messages stay readable, so keep the store private.
+
+## Tests
+
+```sh
+./test
+```
+
+Self-contained: no git, no network, no `~/.claude`. Runs on CI unchanged.
+
+## License
+
+[MIT](LICENSE)
