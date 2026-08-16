@@ -53,12 +53,12 @@ ferry refuses to save into a repo that has no git-crypt, unless you pass
 
 ```sh
 ferry sessions                                  # what is in this directory
-ferry save <name|id> as <repo>:<path>           # copy it out
-ferry save memory as <repo>:<path>              # this directory's memory
+ferry save <name> as <repo>:<dir>               # -> <dir>/<name>.jsonl
+ferry save memory as <repo>:<dir>               # -> <dir>/memory/
 ferry load <repo>:<path>                        # copy it back, here
 ferry list [<repo>[:<path>]]                    # what a repo holds
 ferry update [<repo>]                           # pull it up to date
-ferry repo add <alias> <git-url> [--path DIR]
+ferry repo add <alias> <git-url> [--key FILE] [--path DIR]
 ferry repo list
 ```
 
@@ -85,11 +85,19 @@ it; the worst case is saving them again.
 
 ## Two things worth knowing
 
-**Sessions are addressed by name where possible.** `/rename` names live only in
-`~/.claude/history.jsonl`, never in the transcript, so a loaded session arrives
-unnamed on the other machine. The name in the repo is simply the filename you
-chose, and `load` prints the `/rename` that would restore it. An id prefix works
-anywhere a name does.
+**A session is filed under its own name.** You give `save` a directory, not a
+filename — `ferry save bug-hunt as mine:acme` writes `acme/bug-hunt.jsonl`. One
+session therefore has one name everywhere, and ferry refuses to save a session
+that has no name, because there would be nothing to call it.
+
+Names live only in `~/.claude/history.jsonl`, never in the transcript, so a
+loaded session arrives unnamed on the other machine; `load` prints the
+`/rename` that restores it.
+
+**One name, one session.** If the target already holds a transcript with a
+different session id inside, `save` refuses rather than replacing a
+conversation with an unrelated one — a failure the size check cannot catch,
+since the newcomer is usually bigger.
 
 **Copies never shrink.** Transcripts only grow, so if a `save` or `load` would
 replace a longer file with a shorter one, ferry stops — that is the shape of

@@ -2,7 +2,7 @@
 """ferry - carry Claude Code sessions between machines, using a git repo.
 
     ferry repo add mine git@github.com:you/my-sessions.git --key ~/my-sessions.key
-    ferry save bug-hunt as mine:acme/bug-hunt
+    ferry save bug-hunt as mine:acme        # -> acme/bug-hunt.jsonl
     ferry load mine:acme/bug-hunt
 
 save copies a transcript out of ~/.claude/projects/<cwd>/ into the repo and
@@ -100,14 +100,22 @@ def git(repo, *args, check=True):
     return r
 
 
-def split_ref(ref):
-    """'mine:acme/bug-hunt' -> ('mine', 'acme/bug-hunt')."""
+def split_ref(ref, directory=False):
+    """'mine:acme/bug-hunt' -> ('mine', 'acme/bug-hunt').
+
+    With directory=True the path names a folder to put something in, and may
+    be empty - `mine:` means the top of the repo.
+    """
     if ":" not in ref:
-        die(f"'{ref}' should look like <repo>:<path>, e.g. mine:acme/bug-hunt")
+        die(f"'{ref}' should look like <repo>:<path>, e.g. mine:acme"
+            if directory else
+            f"'{ref}' should look like <repo>:<path>, e.g. mine:acme/bug-hunt")
     alias, _, path = ref.partition(":")
     path = path.strip("/")
-    if not path or path.startswith(".") or ".." in path.split("/"):
+    if path.startswith(".") or ".." in path.split("/"):
         die(f"bad path in '{ref}'")
+    if not path and not directory:
+        die(f"'{ref}' needs a path, e.g. mine:acme/bug-hunt")
     return alias, path
 
 
@@ -334,33 +342,61 @@ def cmd_repo_list(args):
 
 
 def cmd_save(args):
-    alias, path = split_ref(args.target)
+    """Copy a session, or this directory's memory, into a repo.
+
+    The target is a directory, never a filename: what a session is called in
+    the repo is what you called it here. That keeps one name for one session
+    across every machine, and makes the check below meaningful.
+    """
+    alias, path = split_ref(args.target, directory=True)
     repo, here = repo_dir(alias), slug_dir()
     check_encryption(repo, alias, args.allow_plaintext)
     pull(repo)
 
     if args.session == "memory":
         src = here / "memory"
-        if not src.is_dir():
+        if not src.is_dir() or not any(src.glob("*.md")):
             die(f"no memory for this directory ({src})")
-        dest = repo / path
+        leaf = f"{path}/memory" if path else "memory"
+        dest = repo / leaf
         if dest.exists() and not dest.is_dir():
             die(f"{dest} exists and is not a directory")
         shutil.rmtree(dest, ignore_errors=True)
         shutil.copytree(src, dest)
         n = len(list(dest.rglob("*.md")))
-        print(f"saved memory -> {alias}:{path}  ({n} file(s))")
-        commit_push(repo, f"memory: {path}", [path])
+        print(f"saved memory -> {alias}:{leaf}  ({n} file(s))")
+        commit_push(repo, f"memory: {leaf}", [leaf])
         return
 
     src = find_session(args.session, here)
-    dest = repo / f"{path}.jsonl"
+    name = {v: k for k, v in session_name_map().items()}.get(src.stem)
+    if not name:
+        title = ai_title(src)
+        die(f"{src.stem[:8]} has no name, and the name is what it would be "
+            f"filed under.\n"
+            + (f"       Claude calls it '{title}'.\n" if title else "")
+            + f"       resume it and /rename it first, then save it.")
+
+    leaf = f"{path}/{name}" if path else name
+    dest = repo / f"{leaf}.jsonl"
+
+    # The path says who this is; the transcript knows who it really is. If they
+    # disagree, saving would replace one conversation with an unrelated one -
+    # and being larger, it would sail straight past the shrink check.
+    if dest.exists() and not args.force:
+        theirs = session_id_of(dest)
+        if theirs and theirs != src.stem:
+            die(f"{alias}:{leaf} already holds a different session "
+                f"({theirs[:8]}, not {src.stem[:8]}).\n"
+                f"       two sessions cannot share a name here - rename one, "
+                f"or --force to replace it")
+
     refuse_shrink(src, dest, args.force, "saving")
     dest.parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(src, dest)
-    print(f"saved {src.stem[:8]} -> {alias}:{path}  "
+    print(f"saved {name} ({src.stem[:8]}) -> {alias}:{leaf}  "
           f"({dest.stat().st_size/1e6:.1f} MB)")
-    commit_push(repo, f"session: {path}", [f"{path}.jsonl"])
+    commit_push(repo, f"session: {leaf}", [f"{leaf}.jsonl"])
 
 
 def cmd_load(args):
@@ -504,9 +540,9 @@ def cmd_sessions(args):
     n = len(list((here / "memory").glob("*.md"))) if (here / "memory").is_dir() else 0
     if n:
         print(f"  {'memory':<36}  {'':10}  {n:6} md   "
-              f"(ferry save memory as <repo>:<path>)")
+              f"(ferry save memory as <repo>:<dir>)")
     if any(r[3].startswith("* ") for r in rows):
-        print("\n  * Claude's own title - it has no name, so save it by id")
+        print("\n  * Claude's own title, not a name - /rename it before saving")
 
 
 def main():
@@ -530,7 +566,7 @@ def main():
 
     p = sub.add_parser("save", help="copy a session (or memory) into a repo")
     p.add_argument("session", metavar="<name|id|memory>")
-    p.add_argument("target", metavar="[as] <repo>:<path>", nargs="+")
+    p.add_argument("target", metavar="[as] <repo>:<dir>", nargs="+")
     p.add_argument("--force", action="store_true",
                    help="overwrite even if the repo copy is longer")
     p.add_argument("--allow-plaintext", action="store_true",
