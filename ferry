@@ -590,13 +590,16 @@ COMMANDS = {
 }
 
 
-def store_refs(prefix):
+def store_refs(prefix, kind="any"):
     """<store>: and <store>:<path> candidates for whatever is typed so far.
 
     Only ever walks the store's own directory, so it stays fast enough for a
     TAB press. Session names are deliberately not offered - naming them means
     reading every transcript in the directory, which takes about a second in a
     folder of any size.
+
+    kind="memory" offers only directories that hold memory, because that is
+    what `--memory` takes: the folder, never the memory/ inside it.
     """
     names = sorted(repos())
     if ":" not in prefix:
@@ -608,16 +611,22 @@ def store_refs(prefix):
     root = Path(repos()[alias]["path"])
     if not root.is_dir():
         return []
+
     out = []
     for f in root.rglob("*"):
         if ".git" in f.parts:
             continue
         rel = f.relative_to(root).as_posix()
-        if f.is_dir():
-            out.append(f"{alias}:{rel}")
+        if kind == "memory":
+            # the directory you would pass, i.e. the parent of a memory/
+            if f.is_dir() and f.name == "memory":
+                parent = f.parent.relative_to(root).as_posix()
+                out.append(f"{alias}:{parent}" if parent != "." else f"{alias}:")
+        elif f.is_dir():
+            out.append(f"{alias}:{rel}")        # for navigating deeper
         elif f.suffix == ".jsonl":
             out.append(f"{alias}:{rel[:-6]}")
-    return sorted(c for c in out if c.startswith(prefix))
+    return sorted(set(c for c in out if c.startswith(prefix)))
 
 
 def cmd_complete(args):
@@ -646,12 +655,13 @@ def cmd_complete(args):
     out = [f for f in COMMANDS.get(cmd, []) if f.startswith(cur)] if \
         cur.startswith("-") else []
 
+    memory = "--memory" in words
     if not cur.startswith("-"):
         if cmd in ("list", "update"):
             out = [n for n in sorted(repos()) if n.startswith(cur)] \
                 if cmd == "update" else store_refs(cur)
         elif cmd == "load":
-            out = store_refs(cur)
+            out = store_refs(cur, "memory" if memory else "any")
         elif cmd == "save":
             # <session> [to] <store>:<dir> - offer the connector and the store
             out = store_refs(cur)
