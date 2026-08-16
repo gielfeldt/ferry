@@ -87,8 +87,9 @@ it; the worst case is saving them again.
 
 **Sessions are addressed by name where possible.** `/rename` names live only in
 `~/.claude/history.jsonl`, never in the transcript, so a loaded session arrives
-unnamed on the other machine. ferry records the name it was saved under and
-prints it, so you can `/rename` it back. An id prefix works anywhere a name does.
+unnamed on the other machine. The name in the repo is simply the filename you
+chose, and `load` prints the `/rename` that would restore it. An id prefix works
+anywhere a name does.
 
 **Copies never shrink.** Transcripts only grow, so if a `save` or `load` would
 replace a longer file with a shorter one, ferry stops — that is the shape of
@@ -97,9 +98,8 @@ replace a longer file with a shorter one, ferry stops — that is the shape of
 ## Layout in the repo
 
 ```
-acme/bug-hunt.jsonl     the transcript
-acme/bug-hunt.json      which session it is, what it was called, when
-personal/notes/              a memory directory, as .md files
+acme/bug-hunt.jsonl     a transcript - the filename is its name
+personal/notes/         a memory directory, as .md files
 ```
 
 Plain files in plain directories. You can read it, move things around with `mv`,

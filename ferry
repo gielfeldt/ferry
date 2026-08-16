@@ -358,14 +358,9 @@ def cmd_save(args):
     refuse_shrink(src, dest, args.force, "saving")
     dest.parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(src, dest)
-    named = {v: k for k, v in session_name_map().items()}
-    dest.with_suffix(".json").write_text(json.dumps({
-        "name": named.get(src.stem, ""), "session": src.stem, "saved": now(),
-        "from": str(Path.cwd()),
-    }, indent=2, sort_keys=True) + "\n")
     print(f"saved {src.stem[:8]} -> {alias}:{path}  "
           f"({dest.stat().st_size/1e6:.1f} MB)")
-    commit_push(repo, f"session: {path}", [f"{path}.jsonl", f"{path}.json"])
+    commit_push(repo, f"session: {path}", [f"{path}.jsonl"])
 
 
 def cmd_load(args):
@@ -390,11 +385,8 @@ def cmd_load(args):
 
     if not jsonl.exists():
         die(f"nothing at {alias}:{path}")
-    meta = {}
-    side = jsonl.with_suffix(".json")
-    if side.exists():
-        meta = json.loads(side.read_text())
-    sid = meta.get("session") or session_id_of(jsonl)
+    # The transcript carries its own identity, so nothing beside it is needed.
+    sid = session_id_of(jsonl)
     if not sid:
         die(f"cannot tell which session {jsonl} is - no id inside it")
 
@@ -405,9 +397,9 @@ def cmd_load(args):
     print(f"loaded {alias}:{path} -> {dest.name[:8]}  "
           f"({dest.stat().st_size/1e6:.1f} MB)")
     print(f"  resume it here with:  claude --resume {sid}")
-    name = args.name or meta.get("name")
-    if name:
-        print(f"  it was called '{name}' - /rename {name} to restore that")
+    # The name is the leaf of the path you chose when saving.
+    name = args.name or path.rsplit("/", 1)[-1]
+    print(f"  to call it that here:  /rename {name}")
 
 
 def cmd_list(args):
@@ -425,10 +417,9 @@ def cmd_list(args):
     for f in sorted(root.rglob("*.jsonl")):
         found = True
         rel = f.relative_to(repo).as_posix()[:-6]
-        side = f.with_suffix(".json")
-        meta = json.loads(side.read_text()) if side.exists() else {}
-        print(f"  {alias}:{rel:<40} {f.stat().st_size/1e6:6.1f} MB  "
-              f"{meta.get('saved','')[:10]}  {meta.get('name','')}")
+        when = git(repo, "log", "-1", "--format=%ad", "--date=short", "--",
+                   f.relative_to(repo).as_posix(), check=False).stdout.strip()
+        print(f"  {alias}:{rel:<40} {f.stat().st_size/1e6:6.1f} MB  {when}")
     for d in sorted(root.rglob("*")):
         if d.is_dir() and any(d.glob("*.md")):
             found = True
