@@ -22,6 +22,19 @@ fetch() {
     fi
 }
 
+# Same, but to a destination of your choosing, for the completion files.
+fetch_to() {
+    dest="$1"; path="$2"
+    for url in "https://raw.githubusercontent.com/$REPO/${REF:-main}/$path"; do
+        if command -v curl >/dev/null 2>&1; then
+            curl -fsSL "$url" -o "$dest" 2>/dev/null && return 0
+        elif command -v wget >/dev/null 2>&1; then
+            wget -qO "$dest" "$url" 2>/dev/null && return 0
+        fi
+    done
+    return 1
+}
+
 if [ -n "$REF" ]; then
     fetch "https://github.com/$REPO/releases/download/$REF/ferry" ||
     fetch "https://raw.githubusercontent.com/$REPO/$REF/ferry" ||
@@ -43,6 +56,28 @@ mv "$tmp" "$PREFIX/ferry"
 trap - EXIT
 
 "$PREFIX/ferry" --version
+
+# Shell completion. Best effort: a missing completion is an inconvenience, not
+# a failed install, so nothing here is allowed to abort the script.
+BASHDIR="${XDG_DATA_HOME:-$HOME/.local/share}/bash-completion/completions"
+ZSHDIR="${XDG_DATA_HOME:-$HOME/.local/share}/zsh/site-functions"
+comp_tmp="$(mktemp)"
+
+if fetch_to "$comp_tmp" "completions/ferry.bash"; then
+    mkdir -p "$BASHDIR" && mv "$comp_tmp" "$BASHDIR/ferry" \
+        && echo "  bash completion -> $BASHDIR/ferry"
+fi
+comp_tmp="$(mktemp)"
+if fetch_to "$comp_tmp" "completions/ferry.zsh"; then
+    mkdir -p "$ZSHDIR" && mv "$comp_tmp" "$ZSHDIR/_ferry" \
+        && echo "  zsh completion  -> $ZSHDIR/_ferry"
+    case ":${fpath:-}:" in
+        *":$ZSHDIR:"*) ;;
+        *) printf '    zsh needs that on its fpath:\n'
+           printf '      fpath=(%s $fpath)   # before compinit\n' "$ZSHDIR" ;;
+    esac
+fi
+rm -f "$comp_tmp"
 
 case ":${PATH:-}:" in
     *":$PREFIX:"*) ;;
