@@ -63,6 +63,8 @@ ferry save <session> [to] <store>:<dir> [--force]
 ferry save --memory [to] <store>:<dir> [--force]
 ferry load <store>:<path> [--force]
 ferry load --memory <store>:<dir> [--force]
+ferry move <store>:<path> <store>:<dir> [--force]
+ferry move --memory <store>:<dir> <store>:<dir> [--force]
 ferry list [<store>[:<path>]]
 ferry update [<store>]
 ```
@@ -82,6 +84,9 @@ ferry list work
 ferry load work:acme/bug-hunt                 # a session
 ferry load --memory work:acme                 # that folder's memory
 ferry update work                             # pull, and explain a divergence
+
+ferry move work:acme/bug-hunt work:archive    # -> archive/bug-hunt.jsonl
+ferry move --memory work:acme work:acme-v2    # -> acme-v2/memory
 ```
 
 [COOKBOOK.md](COOKBOOK.md) works through the situations you will actually hit.
@@ -101,6 +106,15 @@ call it.
 
 **`load` takes a whole path**, because there you are choosing among what the
 store holds rather than deciding where something goes.
+
+**`move` re-files, it does not rename.** It takes a path and a directory, and
+the leaf goes along unchanged — the same rule `save` follows. A session's name
+lives inside its transcript, so a move that could rename the file would let the
+two disagree; not being able to say a new name means it cannot happen. To
+rename, `/rename` the session and save it again. `--memory` means what it
+means everywhere else, and for the same reason: paths are written without the
+`.jsonl`, so `acme/memory` alone cannot say whether you mean a session called
+memory or the folder's memory.
 
 **Memory belongs to a directory, not a session.** Claude keeps it in
 `memory/*.md` beside the transcripts, shared by everything started there.
@@ -135,8 +149,9 @@ acme/bug-hunt.jsonl     a transcript - the filename is its name
 acme/memory/            a memory directory, as .md files
 ```
 
-Plain files in plain directories. You can rearrange them with `mv` and delete
-them with `rm`, without ferry's help.
+Plain files in plain directories. `ferry move` re-files one and pushes the
+commit; anything else — deleting, renaming a folder — is `git rm` and `git mv`
+in the checkout, without ferry's help.
 
 Only `save` writes to the remote. `load`, `list` and `update` never push, and
 `list` fetches without merging so it can always show what is really there,

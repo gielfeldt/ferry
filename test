@@ -316,6 +316,19 @@ class Completion(unittest.TestCase):
     def test_line_mode_survives_an_unbalanced_quote(self):
         self.complete_line("ferry save \"unclosed")
 
+    def test_move_completes(self):
+        self.assertEqual(self.complete_line("ferry mo"), ["move"])
+        self.assertIn("--memory", self.complete_line("ferry move -"))
+
+    def test_move_source_follows_the_memory_flag(self):
+        """Like load: --memory offers folders holding memory, plain offers
+        sessions. The destination is a folder either way."""
+        plain = self.complete_line("ferry move store:")
+        mem = self.complete_line("ferry move --memory store:")
+        if not plain and not mem:
+            self.skipTest("no store registered in this environment")
+        self.assertNotEqual(plain, mem)
+
     def test_memory_flag_completes(self):
         self.assertEqual(self.complete_line("ferry load --mem"), ["--memory"])
 
@@ -341,7 +354,8 @@ class CommandLine(unittest.TestCase):
         self.calls = []
         self.originals = {}
         for name in ("cmd_add", "cmd_stores", "cmd_sessions", "cmd_memory",
-                     "cmd_save", "cmd_load", "cmd_list", "cmd_update"):
+                     "cmd_save", "cmd_load", "cmd_move", "cmd_list",
+                     "cmd_update"):
             self.originals[name] = getattr(f, name)
             setattr(f, name, lambda args, n=name: self.calls.append((n, args)))
 
@@ -385,6 +399,24 @@ class CommandLine(unittest.TestCase):
     def test_load_drops_the_word_to(self):
         self.run_ferry("load", "work:acme/bug-hunt")
         self.assertEqual(self.calls[0][1].target, "work:acme/bug-hunt")
+
+    def test_move_takes_two_refs(self):
+        self.run_ferry("move", "work:acme/bug-hunt", "work:beta")
+        name, args = self.calls[0]
+        self.assertEqual(name, "cmd_move")
+        self.assertEqual(args.source, "work:acme/bug-hunt")
+        self.assertEqual(args.dest, "work:beta")
+        self.assertFalse(args.memory)
+
+    def test_move_memory_is_a_flag(self):
+        """`acme/memory` could be either a session or a memory folder, so the
+        flag decides here exactly as it does for save and load."""
+        self.run_ferry("move", "--memory", "work:acme", "work:beta")
+        self.assertTrue(self.calls[0][1].memory)
+
+    def test_move_needs_both_ends(self):
+        with quiet(), self.assertRaises(SystemExit):
+            self.run_ferry("move", "work:acme/memory")
 
     def test_bare_list_is_the_same_as_stores(self):
         self.run_ferry("list")

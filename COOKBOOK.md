@@ -10,6 +10,7 @@ Worked examples. Each one stands alone; skip to the situation you are in.
 - [Keep work and personal apart](#keep-work-and-personal-apart)
 - [See what a store holds without changing anything](#see-what-a-store-holds-without-changing-anything)
 - [Rename a session](#rename-a-session)
+- [Reorganise a store](#reorganise-a-store)
 - [When save refuses](#when-save-refuses)
 - [When update says DIVERGED](#when-update-says-diverged)
 - [Adopt a checkout you already have](#adopt-a-checkout-you-already-have)
@@ -190,6 +191,35 @@ git rm acme/bug-hunt.jsonl
 git commit -m "renamed to better-name"
 git push
 ```
+
+`ferry move` will not do this one. It keeps the leaf, so it can re-file a
+session but never rename it — the name is inside the transcript, and only
+`/rename` changes it there.
+
+## Reorganise a store
+
+Moving something to another folder, without a local copy of it and without
+dropping into git:
+
+```sh
+ferry move work:acme/bug-hunt work:archive    # -> archive/bug-hunt.jsonl
+ferry move --memory work:acme work:acme-v2    # -> acme-v2/memory
+ferry move work:old-project work:archive      # a whole folder
+ferry move work:archive/notes work:           # to the top of the store
+```
+
+You name a *directory* and the leaf comes with it, the same rule `save`
+follows. `--memory` decides which one you mean when a folder holds both a
+memory directory and a session named `memory` - the same flag, for the same
+reason, as on `save` and `load`. One commit, pushed, recorded as a rename so
+history follows the file.
+
+It refuses if something is already at the destination, unless you pass
+`--force`, and it works inside one store only — two stores have two keys, so
+crossing between them is a `load` and then a `save`.
+
+Nothing local changes. A machine that already loaded the old copy still has it,
+under the name it always had.
 
 ## When save refuses
 

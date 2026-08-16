@@ -356,7 +356,11 @@ def commit_push(repo, message, paths):
     deliberate. `paths` are repo-relative and are the only things staged.
     """
     for p in paths:
-        git(repo, "add", "--", p)
+        # A path that is gone is a removal, and `git add` refuses a pathspec
+        # matching nothing rather than staging one. Whatever removed it staged
+        # that itself (`move` uses `git mv`), so there is nothing to add here.
+        if (repo / p).exists():
+            git(repo, "add", "--", p)
     if git(repo, "diff", "--cached", "--quiet", "--", *paths,
            check=False).returncode == 0:
         print("  nothing changed")
@@ -546,6 +550,77 @@ def cmd_load(args):
     print(f"  resume it here with:  claude --resume {name}")
 
 
+def cmd_move(args):
+    """Re-file something inside a store, keeping the name it already has.
+
+    The destination is a directory and the leaf comes along unchanged, the same
+    way `save` names the file after the session. That is not only symmetry: a
+    session's name lives inside its own transcript, so a move able to rename the
+    file could make the two disagree. Not being able to say a new name means it
+    cannot happen. To rename, /rename the session and save it again.
+
+    --memory means the same here as everywhere else, and for the same reason: a
+    store can hold acme/memory.jsonl and acme/memory/ at once, and paths are
+    written without the .jsonl, so `acme/memory` alone does not say which one
+    you mean. With the flag the source is the folder holding the memory, just
+    as `load --memory` takes one.
+    """
+    src_alias, src_path = split_ref(args.source, directory=args.memory)
+    dst_alias, dst_path = split_ref(args.dest, directory=True)
+    if src_alias != dst_alias:
+        die(f"move works inside one store, and '{src_alias}' and '{dst_alias}' "
+            f"are two of them.\n"
+            f"       they are encrypted with different keys - load it out of "
+            f"one and save it into the other")
+
+    repo = repo_dir(src_alias)
+    pull(repo)
+
+    if args.memory:
+        src = repo / f"{src_path}/memory" if src_path else repo / "memory"
+        if not src.is_dir():
+            die(f"no memory at {src_alias}:{src_path}")
+    else:
+        # Paths are written without the .jsonl, so a session is looked up the
+        # way `load` looks one up. Falling back to a plain directory lets a
+        # whole folder be moved - but never onto memory/, which has the flag.
+        src = repo / f"{src_path}.jsonl"
+        if not src.is_file():
+            src = repo / src_path
+            if src.is_dir() and src.name == "memory":
+                die(f"{src_alias}:{src_path} is a memory directory - "
+                    f"ferry move --memory {src_alias}:"
+                    f"{src_path.rsplit('/', 1)[0] if '/' in src_path else ''} "
+                    f"{args.dest}")
+            if not src.exists():
+                die(f"nothing at {args.source}")
+
+    # What the user typed named the thing; this is where it actually lives.
+    rel = src.relative_to(repo).as_posix()
+    leaf = f"{dst_path}/{src.name}" if dst_path else src.name
+    dest = repo / leaf
+    if dest == src:
+        die(f"{src_alias}:{rel} is already there")
+    if src in dest.parents:
+        die(f"cannot move {src_alias}:{rel} into itself")
+    if dest.exists():
+        if not args.force:
+            die(f"{src_alias}:{leaf} already exists - --force to replace it")
+        # Clear the destination rather than letting `git mv -f` decide: moving
+        # onto an existing *directory* would put the source inside it, which is
+        # mv's rule and not the one promised here.
+        git(repo, "rm", "-r", "-q", "--", leaf, check=False)
+        if dest.is_dir():
+            shutil.rmtree(dest, ignore_errors=True)
+        elif dest.exists():
+            dest.unlink()
+
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    git(repo, "mv", "--", rel, leaf)
+    print(f"moved {src_alias}:{rel} -> {src_alias}:{leaf}")
+    commit_push(repo, f"move: {rel} -> {leaf}", [rel, leaf])
+
+
 def print_notes(mem):
     """The notes in a memory directory, one per line, with their descriptions.
 
@@ -610,6 +685,7 @@ COMMANDS = {
     "memory":   [],
     "save":     ["--memory", "--force", "--allow-plaintext"],
     "load":     ["--memory", "--force", "--name"],
+    "move":     ["--memory", "--force"],
     "list":     [],
     "update":   [],
 }
@@ -696,6 +772,11 @@ def cmd_complete(args):
             out = store_refs(cur)
             if len(prev) == 3 and "to".startswith(cur):
                 out.append("to")
+        elif cmd == "move":
+            # source takes what --memory says it takes; the destination is
+            # always a folder to put it in
+            out = store_refs(cur) if len(prev) >= 3 else \
+                store_refs(cur, "memory" if memory else "session")
         elif cmd == "add" and len(prev) > 2:
             out = []                        # a url or a new name; nothing to offer
     print("\n".join(out))
@@ -802,6 +883,8 @@ USAGE = """\
   ferry save --memory [to] <store>:<dir> [--force]
   ferry load <store>:<path> [--force]
   ferry load --memory <store>:<dir> [--force]
+  ferry move <store>:<path> <store>:<dir> [--force]
+  ferry move --memory <store>:<dir> <store>:<dir> [--force]
   ferry list [<store>[:<path>]]           without a store, same as `stores`
   ferry update [<store>]\
 """
@@ -827,8 +910,13 @@ examples:
     ferry load --memory work:acme                 that folder's memory
     ferry update work
 
+  tidy the store up
+    ferry move --memory work:acme work:acme-v2    -> acme-v2/memory
+    ferry move work:acme/bug-hunt work:archive    -> archive/bug-hunt.jsonl
+
 A session is filed under its own name, so you give a directory and ferry names
-the file. Loading picks one out again, so there you give the whole path.\
+the file. Loading picks one out again, so there you give the whole path.
+Moving keeps the name too - to change it, /rename and save again.\
 """
 
 
@@ -877,6 +965,15 @@ def main():
     p.add_argument("--force", action="store_true",
                    help="overwrite even if the local copy is longer")
     p.set_defaults(func=cmd_load)
+
+    p = sub.add_parser("move", help="re-file something inside a store")
+    p.add_argument("source", metavar="<store>:<path>")
+    p.add_argument("dest", metavar="<store>:<dir>")
+    p.add_argument("--memory", action="store_true",
+                   help="that folder's memory, not a session of the same name")
+    p.add_argument("--force", action="store_true",
+                   help="replace whatever is already at the destination")
+    p.set_defaults(func=cmd_move)
 
     p = sub.add_parser("list", help="what a store holds, or the stores")
     p.add_argument("ref", nargs="?", metavar="<store>[:<path>]")
