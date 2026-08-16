@@ -13,7 +13,7 @@ ferry save bug-hunt to work:acme
 
 # on the other one
 ferry load work:acme/bug-hunt
-claude --resume 3f9a1c2e-…
+claude --resume bug-hunt
 ```
 
 ## Install
@@ -94,9 +94,10 @@ on the current one. `cd` to where you were working.
 
 **A session is filed under its own name.** `save` takes a *directory* and names
 the file after the session, so one conversation has one name on every machine.
-Names come from `/rename` and live only in `~/.claude/history.jsonl` — never in
-the transcript — so a session with no name cannot be saved, and a loaded one
-arrives unnamed until you `/rename` it. `load` prints the command for that.
+The name comes from `/rename`, `/branch` or `claude -n`, and is recorded inside
+the transcript — so it travels with the session, and a loaded one answers to it
+straight away. A session with no name cannot be saved; there would be nothing to
+call it.
 
 **`load` takes a whole path**, because there you are choosing among what the
 store holds rather than deciding where something goes.
@@ -148,7 +149,6 @@ even when your clone has diverged.
 - **Memory is replaced wholesale**, so notes that exist only on the other
   machine are lost when you save over them.
 - **Collisions are caught, not resolved.** ferry stops and tells you.
-- **Session names are local.** Loading can only suggest a name, not set one.
 - **git-crypt hides contents, not names.** Directory and file names, sizes and
   commit messages stay readable, so keep the store private.
 

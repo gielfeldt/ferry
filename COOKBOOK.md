@@ -80,13 +80,13 @@ On the other machine, in whichever directory you want it:
 ```sh
 ferry update work
 ferry load work:acme/bug-hunt
-#   resume it here with:  claude --resume 3f9a1c2e-…
-#   to call it that here: /rename bug-hunt
+#   resume it here with:  claude --resume bug-hunt
 
-claude --resume 3f9a1c2e-…
+claude --resume bug-hunt
 ```
 
-The directory does not have to be the same one, or even the same path.
+The directory does not have to be the same one, or even the same path, and no
+rename is needed — the name is inside the transcript, so it arrives with it.
 
 ## Work on both machines, back and forth
 
@@ -98,7 +98,7 @@ ferry save bug-hunt to work:acme
 
 # laptop B, starting
 ferry load work:acme/bug-hunt --force     # replace B's older copy
-claude --resume 3f9a1c2e-…
+claude --resume bug-hunt
 # … work …
 ferry save bug-hunt to work:acme
 
@@ -185,8 +185,8 @@ git push
 ## When save refuses
 
 **"has no name, and the name is what it would be filed under"** — the session
-was never renamed. `/rename` it, then save. `ferry sessions` shows Claude's own
-title with a `*` for exactly these.
+was never named. `/rename` it, then save. `ferry sessions` shows Claude's own
+title with a `*` for exactly these — a title is not a name.
 
 **"already holds a different session"** — that name is taken in the store by
 another conversation. Rename one of them, or `--force` if you really mean to
