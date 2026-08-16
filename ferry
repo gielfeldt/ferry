@@ -156,6 +156,28 @@ def find_session(spec, where):
     die(f"no session called '{spec}' here. Try:  ferry sessions")
 
 
+def ai_title(jsonl):
+    """The title Claude gave a session, if it made one.
+
+    Stored as aiTitle on a line near the start when it exists at all - not
+    every session has one.
+    """
+    try:
+        with jsonl.open(errors="replace") as fh:
+            for line in fh:
+                if '"aiTitle"' not in line:
+                    continue
+                try:
+                    t = json.loads(line).get("aiTitle")
+                except json.JSONDecodeError:
+                    continue
+                if t:
+                    return t
+    except OSError:
+        pass
+    return None
+
+
 def session_id_of(jsonl):
     """The session id recorded inside a transcript."""
     try:
@@ -463,7 +485,11 @@ def cmd_update(args):
 
 
 def cmd_sessions(args):
-    """What is in this directory, so you know what you can save."""
+    """What is in this directory, so you know what you can save.
+
+    Ids are printed in full, because the point of reading this list is usually
+    to paste one into `claude --resume`.
+    """
     here = slug_dir()
     if not here.is_dir():
         print(f"no sessions for {Path.cwd()}")
@@ -471,16 +497,25 @@ def cmd_sessions(args):
     by_id = {v: k for k, v in session_name_map().items()}
     rows = []
     for f in here.glob("*.jsonl"):
-        rows.append((f.stat().st_mtime, f.stem, f.stat().st_size,
-                     by_id.get(f.stem, "")))
+        # Your own /rename name if there is one; otherwise the title Claude
+        # gave it, marked with * so the two are never confused - only the
+        # unmarked ones can be used as a name in `ferry save`.
+        name = by_id.get(f.stem, "")
+        if not name:
+            title = ai_title(f)
+            name = f"* {title}" if title else ""
+        rows.append((f.stat().st_mtime, f.stem, f.stat().st_size, name))
     if not rows:
         print(f"no sessions for {Path.cwd()}")
     for mtime, sid, size, name in sorted(rows, reverse=True):
         when = datetime.fromtimestamp(mtime).strftime("%Y-%m-%d")
-        print(f"  {sid[:8]}  {when}  {size/1e6:6.1f} MB  {name}")
+        print(f"  {sid}  {when}  {size/1e6:6.1f} MB  {name}")
     n = len(list((here / "memory").glob("*.md"))) if (here / "memory").is_dir() else 0
     if n:
-        print(f"  memory    {'':10}  {n:6} md   (ferry save memory as <repo>:<path>)")
+        print(f"  {'memory':<36}  {'':10}  {n:6} md   "
+              f"(ferry save memory as <repo>:<path>)")
+    if any(r[3].startswith("* ") for r in rows):
+        print("\n  * Claude's own title - it has no name, so save it by id")
 
 
 def main():
