@@ -54,12 +54,31 @@ ferry save <name|id> as <repo>:<path>           # copy it out
 ferry save memory as <repo>:<path>              # this directory's memory
 ferry load <repo>:<path>                        # copy it back, here
 ferry list [<repo>[:<path>]]                    # what a repo holds
+ferry update [<repo>]                           # pull it up to date
 ferry repo add <alias> <git-url> [--path DIR]
 ferry repo list
 ```
 
 `save` and `load` both act on **the directory you are standing in**, because
 that is what decides which `~/.claude/projects/` folder Claude uses.
+
+## Who touches git, and when
+
+| | fetches | changes your clone | pushes |
+|---|---|---|---|
+| `save` | yes | fast-forwards first | yes |
+| `load` | yes | fast-forwards first | no |
+| `list` | yes | **no** | no |
+| `update` | yes | fast-forwards | no |
+
+`list` fetches but never merges, so it always shows what is really on the
+remote and can tell you how far behind you are — without ever being the command
+that fails. `update` is the one that moves your clone.
+
+ferry never merges. If your clone and the remote have both moved, `update` says
+so and shows you the two ways out (`git rebase` or `git reset --hard`), and
+leaves the choice to you. Your sessions in `~/.claude` are untouched by any of
+it; the worst case is saving them again.
 
 ## Two things worth knowing
 

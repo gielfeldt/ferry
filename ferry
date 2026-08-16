@@ -198,13 +198,37 @@ def check_encryption(repo, alias, allow):
         f"       or override:  --allow-plaintext")
 
 
+def has_upstream(repo):
+    return (git(repo, "remote", check=False).stdout.strip()
+            and git(repo, "rev-parse", "--abbrev-ref", "@{u}",
+                    check=False).returncode == 0)
+
+
+def fetch(repo):
+    """Update the remote-tracking ref. Read-only: never fails on divergence."""
+    if git(repo, "remote", check=False).stdout.strip():
+        git(repo, "fetch", "--quiet", "origin", check=False)
+
+
+def ahead_behind(repo):
+    """(ahead, behind) relative to the upstream, from what was last fetched."""
+    if not has_upstream(repo):
+        return (0, 0)
+    out = git(repo, "rev-list", "--left-right", "--count", "HEAD...@{u}",
+              check=False).stdout.split()
+    return (int(out[0]), int(out[1])) if len(out) == 2 else (0, 0)
+
+
 def pull(repo):
-    if not git(repo, "remote", check=False).stdout.strip():
+    """Fetch and fast-forward. Used by the commands that must be up to date."""
+    fetch(repo)
+    if not has_upstream(repo):
         return
-    git(repo, "fetch", "--quiet", "origin", check=False)
-    if git(repo, "rev-parse", "--abbrev-ref", "@{u}", check=False).returncode == 0:
-        if git(repo, "merge", "--ff-only", "@{u}", check=False).returncode != 0:
-            die("the repo has diverged from its remote - sort that out by hand")
+    if git(repo, "merge", "--ff-only", "@{u}", check=False).returncode != 0:
+        ahead, behind = ahead_behind(repo)
+        die(f"this clone has diverged from its remote "
+            f"({ahead} local commit(s), {behind} on the remote).\n"
+            f"       ferry update explains how to sort it out")
 
 
 def commit_push(repo, message):
@@ -359,9 +383,9 @@ def cmd_list(args):
         return cmd_repo_list(args)
     alias, _, path = args.ref.partition(":")
     repo = repo_dir(alias)
-    # Listing has to fetch, or the only way to see what another machine saved
-    # would be to run something that changes state.
-    pull(repo)
+    # Fetch but never merge. Listing has to see what another machine saved, yet
+    # a read should not be the thing that fails because the clone diverged.
+    fetch(repo)
     root = repo / path.strip("/") if path else repo
     if not root.exists():
         die(f"nothing at {args.ref}")
@@ -380,6 +404,52 @@ def cmd_list(args):
             print(f"  {alias}:{rel:<40} {len(list(d.glob('*.md'))):6} md   memory")
     if not found:
         print(f"  {args.ref} is empty")
+
+    _, behind = ahead_behind(repo)
+    if behind:
+        print(f"\n  {behind} commit(s) waiting on the remote - "
+              f"ferry update {alias}")
+
+
+def cmd_update(args):
+    """Bring a clone up to date, and explain it if that is not possible."""
+    aliases = [args.alias] if args.alias else sorted(repos())
+    if not aliases:
+        die("no repos yet:  ferry repo add mine <git-url>")
+
+    for alias in aliases:
+        repo = repo_dir(alias)
+        fetch(repo)
+        if not has_upstream(repo):
+            print(f"{alias}: no remote to update from")
+            continue
+
+        ahead, behind = ahead_behind(repo)
+        if not behind and not ahead:
+            print(f"{alias}: up to date")
+            continue
+        if ahead and not behind:
+            print(f"{alias}: {ahead} commit(s) here that the remote lacks - "
+                  f"they go up with your next save")
+            continue
+        if behind and not ahead:
+            git(repo, "merge", "--ff-only", "@{u}")
+            print(f"{alias}: pulled {behind} commit(s)")
+            continue
+
+        # Diverged. ferry will not merge encrypted content, and it will not
+        # throw away a commit it did not make, so this is where it stops and
+        # says exactly what it is looking at.
+        print(f"{alias}: DIVERGED - {ahead} commit(s) here, "
+              f"{behind} on the remote, and they have split.")
+        print(f"  ferry never merges, so this one is yours to settle:")
+        print(f"    cd {repo}")
+        print(f"    git log --oneline HEAD...@{{u}}       # see both sides")
+        print(f"  then pick one:")
+        print(f"    git rebase origin/main             # replay your commits on top")
+        print(f"    git reset --hard origin/main       # discard yours, take the remote")
+        print(f"  your sessions in ~/.claude are untouched either way - "
+              f"the worst case is re-saving them.")
 
 
 def cmd_sessions(args):
@@ -440,6 +510,10 @@ def main():
     p = sub.add_parser("list", help="what is in a repo")
     p.add_argument("ref", nargs="?", metavar="[<repo>[:<path>]]")
     p.set_defaults(func=cmd_list)
+
+    p = sub.add_parser("update", help="pull a repo up to date")
+    p.add_argument("alias", nargs="?", help="one repo, or all of them")
+    p.set_defaults(func=cmd_update)
 
     p = sub.add_parser("sessions", help="what is in this directory")
     p.set_defaults(func=cmd_sessions)
