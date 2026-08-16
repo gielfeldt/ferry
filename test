@@ -172,6 +172,30 @@ class TranscriptFields(unittest.TestCase):
         self.assertIsNone(f.ai_title(tmpfile('{"a":1}\n')))
 
 
+class SizeDelta(unittest.TestCase):
+    """What a command reports having done, in place of an unchanging id."""
+
+    def test_new_file(self):
+        self.assertIn("new", f.size_delta(tmpfile("x" * 10),
+                                          Path("/nonexistent/x.jsonl")))
+
+    def test_unchanged(self):
+        a, b = tmpfile("x" * 10), tmpfile("y" * 10)
+        self.assertIn("unchanged", f.size_delta(a, b))
+
+    def test_small_growth_is_bytes(self):
+        a, b = tmpfile("x" * 1102), tmpfile("y" * 1000)
+        self.assertIn("+102 bytes", f.size_delta(a, b))
+
+    def test_large_growth_is_megabytes(self):
+        a, b = tmpfile("x" * 2_000_000), tmpfile("y" * 1_000_000)
+        self.assertIn("+1.0 MB", f.size_delta(a, b))
+
+    def test_shrinking_is_reported_signed(self):
+        a, b = tmpfile("x" * 10), tmpfile("y" * 100)
+        self.assertIn("-90 bytes", f.size_delta(a, b))
+
+
 class RefuseShrink(unittest.TestCase):
     """Transcripts only grow, so a shorter replacement means lost turns."""
 

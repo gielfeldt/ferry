@@ -250,6 +250,23 @@ def session_id_of(jsonl):
 
 # ------------------------------------------------------------------ copying
 
+def size_delta(src, dest):
+    """How much bigger the incoming copy is than the one being replaced.
+
+    Reported instead of a session id, which is the same before and after by
+    definition and so says nothing about what a command did.
+    """
+    new = src.stat().st_size
+    if not dest.exists():
+        return f"{new/1e6:.1f} MB, new"
+    old = dest.stat().st_size
+    if new == old:
+        return f"{new/1e6:.1f} MB, unchanged"
+    d = new - old
+    unit = f"{d:+,} bytes" if abs(d) < 100_000 else f"{d/1e6:+.1f} MB"
+    return f"{new/1e6:.1f} MB, {unit}"
+
+
 def refuse_shrink(src, dest, force, what):
     """Transcripts only grow, so a shorter replacement means lost turns."""
     if force or not dest.exists():
@@ -430,7 +447,7 @@ def cmd_save(args):
     name = session_name(src)
     if not name:
         title = ai_title(src)
-        die(f"{src.stem[:8]} has no name, and the name is what it would be "
+        die(f"{src.stem} has no name, and the name is what it would be "
             f"filed under.\n"
             + (f"       Claude calls it '{title}'.\n" if title else "")
             + f"       resume it and /rename it first, then save it.")
@@ -444,16 +461,16 @@ def cmd_save(args):
     if dest.exists() and not args.force:
         theirs = session_id_of(dest)
         if theirs and theirs != src.stem:
-            die(f"{alias}:{leaf} already holds a different session "
-                f"({theirs[:8]}, not {src.stem[:8]}).\n"
+            die(f"{alias}:{leaf} already holds a different session:\n"
+                f"       there: {theirs}\n       here:  {src.stem}\n"
                 f"       two sessions cannot share a name here - rename one, "
                 f"or --force to replace it")
 
     refuse_shrink(src, dest, args.force, "saving")
     dest.parent.mkdir(parents=True, exist_ok=True)
+    delta = size_delta(src, dest)
     shutil.copyfile(src, dest)
-    print(f"saved {name} ({src.stem[:8]}) -> {alias}:{leaf}  "
-          f"({dest.stat().st_size/1e6:.1f} MB)")
+    print(f"saved {name} -> {alias}:{leaf}  ({delta})")
     commit_push(repo, f"session: {leaf}", [f"{leaf}.jsonl"])
 
 
@@ -496,12 +513,12 @@ def cmd_load(args):
     dest = here / f"{sid}.jsonl"
     refuse_shrink(jsonl, dest, args.force, "loading")
     here.mkdir(parents=True, exist_ok=True)
+    delta = size_delta(jsonl, dest)
     shutil.copyfile(jsonl, dest)
-    print(f"loaded {alias}:{path} -> {dest.name[:8]}  "
-          f"({dest.stat().st_size/1e6:.1f} MB)")
     # The name travels inside the transcript, so it is already this session's
     # name here - no rename needed, and --resume takes it as readily as an id.
     name = args.name or session_name(dest) or sid
+    print(f"loaded {alias}:{path} ({delta})")
     print(f"  resume it here with:  claude --resume {name}")
 
 
