@@ -17,7 +17,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-__version__ = "1.1.0"
+__version__ = "1.2.0"
 
 CONFIG = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config") / "ferry"
 CONFIG_FILE = CONFIG / "repos.json"
@@ -113,6 +113,58 @@ def split_ref(ref, directory=False):
     if not path and not directory:
         die(f"'{ref}' needs a path, e.g. work:acme/bug-hunt")
     return alias, path
+
+
+# ------------------------------------------------------------------ layout
+# A store keeps its two kinds of thing in two trees:
+#
+#     sessions/<dir>/<name>.jsonl
+#     memories/<dir>/<note>.md
+#
+# Nothing about that reaches the command line: you still say `work:acme`, and
+# --memory still says which kind you mean. It is a storage decision, and it is
+# the whole reason the two cannot interfere. Memory is written by replacing its
+# directory wholesale, so anything sharing that directory would be destroyed
+# along with it - here nothing ever can, because transcripts are in the other
+# tree. It also means a session may be called `memory` with nothing to resolve.
+
+SESSIONS, MEMORIES = "sessions", "memories"
+
+
+def in_store(path, memory=False):
+    """Where a ref lives on disk. 'acme/bug-hunt' -> 'sessions/acme/bug-hunt'."""
+    tree = MEMORIES if memory else SESSIONS
+    return f"{tree}/{path}" if path else tree
+
+
+def of_store(path):
+    """The reverse, for anything ferry prints: strip the tree it came from."""
+    for tree in (SESSIONS, MEMORIES):
+        if path == tree:
+            return ""
+        if path.startswith(tree + "/"):
+            return path[len(tree) + 1:]
+    return path
+
+
+def old_layout(repo):
+    """Transcripts filed before the split, when both trees shared one path.
+
+    Worth naming rather than ignoring: such a store looks empty to this version
+    otherwise, and 'nothing there' is the wrong answer to 'my sessions are
+    missing'.
+    """
+    if (repo / SESSIONS).is_dir() or (repo / MEMORIES).is_dir():
+        return []
+    return sorted(p for p in repo.rglob("*.jsonl") if ".git" not in p.parts)
+
+
+def check_layout(repo, alias):
+    stale = old_layout(repo)
+    if stale:
+        die(f"'{alias}' was filed by ferry 1.1 or older, which kept sessions "
+            f"and memory in one tree ({len(stale)} transcript(s)).\n"
+            f"       ferry migrate {alias}      to move them, once, in one commit")
 
 
 # ------------------------------------------------------------------ sessions
@@ -454,21 +506,22 @@ def cmd_save(args):
     alias, path = split_ref(target, directory=True)
     repo, here = repo_dir(alias), slug_dir()
     check_encryption(repo, alias, args.allow_plaintext)
+    check_layout(repo, alias)
     pull(repo)
 
     if args.memory:
         src = here / "memory"
         if not src.is_dir() or not any(src.glob("*.md")):
             die(f"no memory for this directory ({src})")
-        leaf = f"{path}/memory" if path else "memory"
+        leaf = in_store(path, memory=True)
         dest = repo / leaf
         if dest.exists() and not dest.is_dir():
             die(f"{dest} exists and is not a directory")
         shutil.rmtree(dest, ignore_errors=True)
         shutil.copytree(src, dest)
         n = len(list(dest.rglob("*.md")))
-        print(f"saved memory -> {alias}:{leaf}  ({n} file(s))")
-        commit_push(repo, f"memory: {leaf}", [leaf])
+        print(f"saved memory -> {alias}:{path}  ({n} file(s))")
+        commit_push(repo, f"memory: {path or 'top'}", [leaf])
         return
 
     src = find_session(args.session, here)
@@ -480,7 +533,8 @@ def cmd_save(args):
             + (f"       Claude calls it '{title}'.\n" if title else "")
             + f"       resume it and /rename it first, then save it.")
 
-    leaf = f"{path}/{name}" if path else name
+    shown = f"{path}/{name}" if path else name      # what you call it
+    leaf = in_store(shown)                          # where it goes
     dest = repo / f"{leaf}.jsonl"
 
     # The path says who this is; the transcript knows who it really is. If they
@@ -489,7 +543,7 @@ def cmd_save(args):
     if dest.exists() and not args.force:
         theirs = session_id_of(dest)
         if theirs and theirs != src.stem:
-            die(f"{alias}:{leaf} already holds a different session:\n"
+            die(f"{alias}:{shown} already holds a different session:\n"
                 f"       there: {theirs}\n       here:  {src.stem}\n"
                 f"       two sessions cannot share a name here - rename one, "
                 f"or --force to replace it")
@@ -498,25 +552,25 @@ def cmd_save(args):
     dest.parent.mkdir(parents=True, exist_ok=True)
     delta = size_delta(src, dest)
     shutil.copyfile(src, dest)
-    print(f"saved {name} -> {alias}:{leaf}  ({delta})")
-    commit_push(repo, f"session: {leaf}", [f"{leaf}.jsonl"])
+    print(f"saved {name} -> {alias}:{shown}  ({delta})")
+    commit_push(repo, f"session: {shown}", [f"{leaf}.jsonl"])
 
 
 def cmd_load(args):
     """Copy a session, or a directory's memory, out of a store and into here.
 
-    --memory decides which, rather than guessing from what happens to exist:
-    a store can hold both acme/memory.jsonl and acme/memory/ at once.
+    --memory says which of the store's two trees to read from; it is never a
+    guess about what happens to exist.
     """
     alias, path = split_ref(args.target, directory=args.memory)
     repo, here = repo_dir(alias), slug_dir()
+    check_layout(repo, alias)
     pull(repo)
 
     if args.memory:
-        leaf = f"{path}/memory" if path else "memory"
-        mem = repo / leaf
+        mem = repo / in_store(path, memory=True)
         if not mem.is_dir():
-            die(f"no memory at {alias}:{leaf}")
+            die(f"no memory at {alias}:{path}")
         dest = here / "memory"
         # Claude Code creates an empty memory/ for every directory, so only an
         # existing one that actually holds notes is worth protecting.
@@ -526,11 +580,11 @@ def cmd_load(args):
         here.mkdir(parents=True, exist_ok=True)
         shutil.rmtree(dest, ignore_errors=True)
         shutil.copytree(mem, dest)
-        print(f"loaded memory {alias}:{leaf} -> {dest}  "
+        print(f"loaded memory {alias}:{path} -> {dest}  "
               f"({len(list(dest.rglob('*.md')))} file(s))")
         return
 
-    jsonl = repo / f"{path}.jsonl"
+    jsonl = repo / f"{in_store(path)}.jsonl"
     if not jsonl.exists():
         die(f"nothing at {alias}:{path}")
     # The transcript carries its own identity, so nothing beside it is needed.
@@ -550,35 +604,60 @@ def cmd_load(args):
     print(f"  resume it here with:  claude --resume {name}")
 
 
-def move_source(repo, path, memory, alias="store", dest="<store>:<dir>"):
-    """Which file or directory a move ref actually names.
+def cmd_migrate(args):
+    """Move a pre-1.2 store into the two trees, once, in one commit.
 
-    A store can hold acme/memory.jsonl and acme/memory/ side by side, and refs
-    are written without the .jsonl - so `acme/memory` alone does not say which.
-    The flag decides, exactly as it does for save and load. They never collide
-    on disk, so keeping them apart is only a matter of picking the right name
-    here; everything after this point is the same operation either way.
+    Before 1.2 both kinds shared a path: acme/bug-hunt.jsonl beside
+    acme/memory/. Everything below acme/memory/ is memory; every transcript is
+    a session. That is enough to sort them without guessing.
     """
-    if memory:
-        src = repo / f"{path}/memory" if path else repo / "memory"
-        if not src.is_dir():
-            die(f"no memory at {alias}:{path}")
-        return src
+    alias = args.name
+    repo = repo_dir(alias)
+    if not old_layout(repo):
+        print(f"{alias} is already split into {SESSIONS}/ and {MEMORIES}/")
+        return
+    pull(repo)
 
-    src = repo / f"{path}.jsonl"
-    if src.is_file():
-        return src
-    # Falling back to a plain directory is what lets a whole folder move. Never
-    # onto a memory/ though: that is the one the flag exists for, and guessing
-    # would be the thing the flag was added to avoid.
-    src = repo / path
-    if src.is_dir() and src.name == "memory":
-        parent = path.rsplit("/", 1)[0] if "/" in path else ""
-        die(f"{alias}:{path} is a memory directory - "
-            f"ferry move --memory {alias}:{parent} {dest}")
-    if not src.exists():
-        die(f"nothing at {alias}:{path}")
-    return src
+    moves = []                                     # (from, to)
+    for p in sorted(repo.iterdir()):
+        if p.name.startswith(".") or not p.is_dir():
+            continue
+        for src in sorted(p.rglob("*")):
+            if not src.is_file():
+                continue
+            rel = src.relative_to(repo).as_posix()
+            parts = rel.split("/")
+            if "memory" in parts:                  # a note, wherever it sat
+                i = parts.index("memory")
+                moves.append((rel, in_store(
+                    "/".join(parts[:i] + parts[i + 1:]), memory=True)))
+            elif rel.endswith(".jsonl"):
+                moves.append((rel, in_store(rel)))
+    loose = sorted(p.name for p in repo.iterdir()
+                   if p.is_file() and not p.name.startswith("."))
+
+    for src, dst in moves:
+        print(f"  {src}  ->  {dst}")
+    if loose:
+        print(f"\n  left where they are: {', '.join(loose)}")
+    if not moves:
+        print("nothing to move")
+        return
+
+    for src, dst in moves:
+        (repo / dst).parent.mkdir(parents=True, exist_ok=True)
+        git(repo, "mv", "--", src, dst)
+    # git tracks files, not directories, so the emptied ones are left behind on
+    # disk. Nothing reads them, but a store you can browse should not be full
+    # of husks of its old shape.
+    for d in sorted(repo.rglob("*"), key=lambda p: -len(p.parts)):
+        if d.is_dir() and d.name not in (SESSIONS, MEMORIES) \
+                and ".git" not in d.parts and not any(d.iterdir()):
+            d.rmdir()
+    print(f"\nmoved {len(moves)} file(s) into {SESSIONS}/ and {MEMORIES}/")
+    commit_push(repo, f"split into {SESSIONS}/ and {MEMORIES}/",
+                sorted({m[1].split("/")[0] for m in moves} |
+                       {m[0].split("/")[0] for m in moves}))
 
 
 def cmd_move(args):
@@ -590,11 +669,8 @@ def cmd_move(args):
     file could make the two disagree. Not being able to say a new name means it
     cannot happen. To rename, /rename the session and save it again.
 
-    --memory means the same here as everywhere else, and for the same reason: a
-    store can hold acme/memory.jsonl and acme/memory/ at once, and paths are
-    written without the .jsonl, so `acme/memory` alone does not say which one
-    you mean. With the flag the source is the folder holding the memory, just
-    as `load --memory` takes one.
+    --memory picks the tree, as everywhere else. There is nothing to resolve
+    beyond that: the two trees cannot hold the same path.
     """
     src_alias, src_path = split_ref(args.source, directory=args.memory)
     dst_alias, dst_path = split_ref(args.dest, directory=True)
@@ -605,21 +681,35 @@ def cmd_move(args):
             f"one and save it into the other")
 
     repo = repo_dir(src_alias)
+    check_layout(repo, src_alias)
     pull(repo)
 
-    src = move_source(repo, src_path, args.memory, src_alias, args.dest)
+    if args.memory:
+        src = repo / in_store(src_path, memory=True)
+        if not src.is_dir():
+            die(f"no memory at {src_alias}:{src_path}")
+        rel, name = src.relative_to(repo).as_posix(), None
+        leaf = in_store(dst_path, memory=True)
+    else:
+        src = repo / f"{in_store(src_path)}.jsonl"
+        if not src.is_file():
+            # A folder rather than a session, which is how a whole project is
+            # re-filed. Both live under the same tree, so one lookup covers it.
+            src = repo / in_store(src_path)
+            if not src.exists():
+                die(f"nothing at {src_alias}:{src_path}")
+        rel = src.relative_to(repo).as_posix()
+        leaf = in_store(f"{dst_path}/{src.name}" if dst_path else src.name)
 
-    # What the user typed named the thing; this is where it actually lives.
-    rel = src.relative_to(repo).as_posix()
-    leaf = f"{dst_path}/{src.name}" if dst_path else src.name
     dest = repo / leaf
     if dest == src:
-        die(f"{src_alias}:{rel} is already there")
+        die(f"{src_alias}:{of_store(rel)} is already there")
     if src in dest.parents:
-        die(f"cannot move {src_alias}:{rel} into itself")
+        die(f"cannot move {src_alias}:{of_store(rel)} into itself")
     if dest.exists():
         if not args.force:
-            die(f"{src_alias}:{leaf} already exists - --force to replace it")
+            die(f"{src_alias}:{of_store(leaf)} already exists - "
+                f"--force to replace it")
         # Clear the destination rather than letting `git mv -f` decide: moving
         # onto an existing *directory* would put the source inside it, which is
         # mv's rule and not the one promised here.
@@ -631,8 +721,8 @@ def cmd_move(args):
 
     dest.parent.mkdir(parents=True, exist_ok=True)
     git(repo, "mv", "--", rel, leaf)
-    print(f"moved {src_alias}:{rel} -> {src_alias}:{leaf}")
-    commit_push(repo, f"move: {rel} -> {leaf}", [rel, leaf])
+    print(f"moved {src_alias}:{of_store(rel)} -> {src_alias}:{of_store(leaf)}")
+    commit_push(repo, f"move: {of_store(rel)} -> {of_store(leaf)}", [rel, leaf])
 
 
 def print_notes(mem):
@@ -656,35 +746,55 @@ def print_notes(mem):
 
 
 def cmd_list(args):
+    """What a store holds: its sessions, or with --memory its memory.
+
+    Paths are printed the way you would type them, so the two trees a store
+    keeps on disk never show up here.
+    """
     if not args.ref:
-        return cmd_stores(args)      # bare `list` is the same question
+        if not args.memory:
+            return cmd_stores(args)   # bare `list` is the same question
+        for alias in sorted(repos()):
+            list_one(alias, "", True)
+        return
     alias, _, path = args.ref.partition(":")
+    list_one(alias, path.strip("/"), args.memory)
+
+
+def list_one(alias, path, memory):
     repo = repo_dir(alias)
+    check_layout(repo, alias)
     # Fetch but never merge. Listing has to see what another machine saved, yet
     # a read should not be the thing that fails because the clone diverged.
     fetch(repo)
-    root = repo / path.strip("/") if path else repo
-    if not root.exists():
-        die(f"nothing at {args.ref}")
+    root = repo / in_store(path, memory)
+    shown = f"{alias}:{path}" if path else f"{alias}:"
     found = False
-    # A memory directory named outright. rglob never yields root itself, so
-    # without this the one ref that points straight at memory reads as empty.
-    if any(root.glob("*.md")):
-        print_notes(root)
-        found = True
-    for f in sorted(root.rglob("*.jsonl")):
-        found = True
-        rel = f.relative_to(repo).as_posix()[:-6]
-        when = git(repo, "log", "-1", "--format=%ad", "--date=short", "--",
-                   f.relative_to(repo).as_posix(), check=False).stdout.strip()
-        print(f"  {alias}:{rel:<40} {f.stat().st_size/1e6:6.1f} MB  {when}")
-    for d in sorted(root.rglob("*")):
-        if d.is_dir() and any(d.glob("*.md")):
+
+    if memory:
+        # The folder itself, when it is the one asked for - rglob yields a
+        # directory's children but never the directory.
+        if any(root.glob("*.md")):
+            print(f"  {shown}")
+            print_notes(root)
             found = True
-            rel = d.relative_to(repo).as_posix()
-            print(f"  {alias}:{rel:<40} {len(list(d.glob('*.md'))):6} md   memory")
+        for d in sorted(root.rglob("*")):
+            if d.is_dir() and any(d.glob("*.md")):
+                found = True
+                rel = of_store(d.relative_to(repo).as_posix())
+                print(f"  {alias}:{rel:<40} "
+                      f"{len(list(d.glob('*.md'))):6} note(s)")
+    else:
+        for f in sorted(root.rglob("*.jsonl")):
+            found = True
+            disk = f.relative_to(repo).as_posix()
+            rel = of_store(disk)[:-6]
+            when = git(repo, "log", "-1", "--format=%ad", "--date=short", "--",
+                       disk, check=False).stdout.strip()
+            print(f"  {alias}:{rel:<40} {f.stat().st_size/1e6:6.1f} MB  {when}")
+
     if not found:
-        print(f"  {args.ref} is empty")
+        print(f"  {shown} has no {'memory' if memory else 'sessions'}")
 
     _, behind = ahead_behind(repo)
     if behind:
@@ -700,8 +810,9 @@ COMMANDS = {
     "save":     ["--memory", "--force", "--allow-plaintext"],
     "load":     ["--memory", "--force", "--name"],
     "move":     ["--memory", "--force"],
-    "list":     [],
+    "list":     ["--memory"],
     "update":   [],
+    "migrate":  [],
 }
 
 
@@ -713,10 +824,9 @@ def store_refs(prefix, kind="any"):
     reading every transcript in the directory, which takes about a second in a
     folder of any size.
 
-    kind="memory" offers only directories that hold memory, because that is
-    what `--memory` takes: the folder, never the memory/ inside it.
-    kind="session" is the mirror image: transcripts and the folders leading to
-    them, never a memory/ - `load` without --memory cannot take one.
+    The store keeps sessions and memory in separate trees, so which tree to
+    walk is simply which kind was asked for, and what comes back is the path
+    you would type - never the tree it was found in.
     """
     names = sorted(repos())
     if ":" not in prefix:
@@ -729,22 +839,25 @@ def store_refs(prefix, kind="any"):
     if not root.is_dir():
         return []
 
+    trees = [MEMORIES] if kind == "memory" else \
+            [SESSIONS] if kind == "session" else [SESSIONS, MEMORIES]
     out = []
-    for f in root.rglob("*"):
-        if ".git" in f.parts:
+    for tree in trees:
+        base = root / tree
+        if not base.is_dir():
             continue
-        rel = f.relative_to(root).as_posix()
-        if kind == "memory":
-            # the directory you would pass, i.e. the parent of a memory/
-            if f.is_dir() and f.name == "memory":
-                parent = f.parent.relative_to(root).as_posix()
-                out.append(f"{alias}:{parent}" if parent != "." else f"{alias}:")
-        elif f.is_dir():
-            if kind == "session" and f.name == "memory":
-                continue                        # not loadable as a session
-            out.append(f"{alias}:{rel}")        # for navigating deeper
-        elif f.suffix == ".jsonl":
-            out.append(f"{alias}:{rel[:-6]}")
+        for f in base.rglob("*"):
+            if ".git" in f.parts:
+                continue
+            rel = f.relative_to(base).as_posix()
+            if f.is_dir():
+                out.append(f"{alias}:{rel}")
+            elif tree == SESSIONS and f.suffix == ".jsonl":
+                out.append(f"{alias}:{rel[:-6]}")
+            elif tree == MEMORIES and f.suffix == ".md":
+                # memory is addressed by its folder, never by a note
+                parent = f.parent.relative_to(base).as_posix()
+                out.append(f"{alias}:" + ("" if parent == "." else parent))
     return sorted(set(c for c in out if c.startswith(prefix)))
 
 
@@ -776,9 +889,10 @@ def cmd_complete(args):
 
     memory = "--memory" in words
     if not cur.startswith("-"):
-        if cmd in ("list", "update"):
-            out = [n for n in sorted(repos()) if n.startswith(cur)] \
-                if cmd == "update" else store_refs(cur)
+        if cmd in ("update", "migrate"):
+            out = [n for n in sorted(repos()) if n.startswith(cur)]
+        elif cmd == "list":
+            out = store_refs(cur, "memory" if memory else "session")
         elif cmd == "load":
             out = store_refs(cur, "memory" if memory else "session")
         elif cmd == "save":
@@ -900,7 +1014,9 @@ USAGE = """\
   ferry move <store>:<path> <store>:<dir> [--force]
   ferry move --memory <store>:<dir> <store>:<dir> [--force]
   ferry list [<store>[:<path>]]           without a store, same as `stores`
-  ferry update [<store>]\
+  ferry list --memory [<store>[:<dir>]]
+  ferry update [<store>]
+  ferry migrate <store>                  split a pre-1.2 store into two trees\
 """
 
 EXAMPLES = """\
@@ -919,7 +1035,8 @@ examples:
     ferry save --memory to work:acme              -> acme/memory/
 
   fetch it on the other machine
-    ferry list work
+    ferry list work                               its sessions
+    ferry list --memory work                      its memory
     ferry load work:acme/bug-hunt                 a session
     ferry load --memory work:acme                 that folder's memory
     ferry update work
@@ -930,7 +1047,10 @@ examples:
 
 A session is filed under its own name, so you give a directory and ferry names
 the file. Loading picks one out again, so there you give the whole path.
-Moving keeps the name too - to change it, /rename and save again.\
+Moving keeps the name too - to change it, /rename and save again.
+
+--memory is how you say which of the two you mean, everywhere. A store keeps
+them in separate trees, so a session may be called `memory` like anything else.\
 """
 
 
@@ -991,7 +1111,13 @@ def main():
 
     p = sub.add_parser("list", help="what a store holds, or the stores")
     p.add_argument("ref", nargs="?", metavar="<store>[:<path>]")
+    p.add_argument("--memory", action="store_true",
+                   help="memory rather than sessions")
     p.set_defaults(func=cmd_list)
+
+    p = sub.add_parser("migrate", help="split a pre-1.2 store into two trees")
+    p.add_argument("name", metavar="<store>")
+    p.set_defaults(func=cmd_migrate)
 
     p = sub.add_parser("complete")          # no help: hidden from --help
     p.add_argument("--line", help="the raw command line, split here not by the shell")

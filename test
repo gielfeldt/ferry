@@ -128,44 +128,62 @@ class NoteDescription(unittest.TestCase):
         self.assertEqual(f.note_description(Path("/nonexistent/x.md")), "")
 
 
-class MoveSource(unittest.TestCase):
-    """A store can hold acme/memory.jsonl and acme/memory/ at once. Which one a
-    move names is the whole reason --memory exists here."""
+class Layout(unittest.TestCase):
+    """A store keeps sessions and memory in two trees. Nothing about that
+    reaches the command line, so the mapping is the whole of it."""
 
-    def setUp(self):
-        self.repo = Path(tempfile.mkdtemp())
-        (self.repo / "proj" / "memory").mkdir(parents=True)
-        (self.repo / "proj" / "memory.jsonl").write_text("the session\n")
-        (self.repo / "proj" / "memory" / "one.md").write_text("the memory\n")
-        (self.repo / "proj" / "other.jsonl").write_text("bystander\n")
+    def test_a_session_ref_goes_under_sessions(self):
+        self.assertEqual(f.in_store("acme/bug-hunt"), "sessions/acme/bug-hunt")
 
-    def test_memory_picks_the_directory(self):
-        got = f.move_source(self.repo, "proj", True)
-        self.assertEqual(got, self.repo / "proj" / "memory")
-        self.assertTrue(got.is_dir())
+    def test_a_memory_ref_goes_under_memories(self):
+        self.assertEqual(f.in_store("acme", memory=True), "memories/acme")
 
-    def test_without_the_flag_picks_the_session_of_that_name(self):
-        got = f.move_source(self.repo, "proj/memory", False)
-        self.assertEqual(got, self.repo / "proj" / "memory.jsonl")
-        self.assertEqual(got.read_text(), "the session\n")
+    def test_the_top_of_a_store_is_the_tree_itself(self):
+        self.assertEqual(f.in_store(""), "sessions")
+        self.assertEqual(f.in_store("", memory=True), "memories")
 
-    def test_a_folder_moves_when_no_session_matches(self):
-        self.assertEqual(f.move_source(self.repo, "proj", False),
-                         self.repo / "proj")
+    def test_a_session_may_be_called_memory(self):
+        """The thing that needed a flag before is now just a name."""
+        self.assertEqual(f.in_store("acme/memory"), "sessions/acme/memory")
+        self.assertNotEqual(f.in_store("acme/memory"),
+                            f.in_store("acme", memory=True))
 
-    def test_a_memory_folder_alone_is_refused_not_guessed(self):
-        (self.repo / "proj" / "memory.jsonl").unlink()
+    def test_printing_strips_the_tree_again(self):
+        for ref in ("acme/bug-hunt", "acme", "acme/memory", ""):
+            for mem in (False, True):
+                with self.subTest(ref=ref, memory=mem):
+                    self.assertEqual(f.of_store(f.in_store(ref, mem)), ref)
+
+    def test_a_folder_of_the_same_name_is_not_stripped_twice(self):
+        self.assertEqual(f.of_store("sessions/sessions/x"), "sessions/x")
+
+
+class OldLayout(unittest.TestCase):
+    """A store written before the split must be named, not read as empty."""
+
+    def store(self, *paths):
+        d = Path(tempfile.mkdtemp())
+        for p in paths:
+            (d / p).parent.mkdir(parents=True, exist_ok=True)
+            (d / p).write_text("x")
+        return d
+
+    def test_transcripts_in_the_old_place_are_found(self):
+        d = self.store("acme/bug-hunt.jsonl", "acme/memory/note.md")
+        self.assertEqual([p.name for p in f.old_layout(d)], ["bug-hunt.jsonl"])
+
+    def test_a_split_store_is_not_flagged(self):
+        d = self.store("sessions/acme/bug-hunt.jsonl", "memories/acme/note.md")
+        self.assertEqual(f.old_layout(d), [])
+
+    def test_an_empty_store_is_not_flagged(self):
+        self.assertEqual(f.old_layout(Path(tempfile.mkdtemp())), [])
+
+    def test_the_check_explains_what_to_run(self):
+        d = self.store("acme/bug-hunt.jsonl")
         with quiet() as (_, err), self.assertRaises(SystemExit):
-            f.move_source(self.repo, "proj/memory", False)
-        self.assertIn("--memory", err.getvalue())
-
-    def test_missing_memory_says_so(self):
-        with quiet(), self.assertRaises(SystemExit):
-            f.move_source(self.repo, "nope", True)
-
-    def test_missing_session_says_so(self):
-        with quiet(), self.assertRaises(SystemExit):
-            f.move_source(self.repo, "proj/nope", False)
+            f.check_layout(d, "work")
+        self.assertIn("ferry migrate work", err.getvalue())
 
 
 class PrintNotes(unittest.TestCase):
@@ -395,7 +413,7 @@ class CommandLine(unittest.TestCase):
         self.originals = {}
         for name in ("cmd_add", "cmd_stores", "cmd_sessions", "cmd_memory",
                      "cmd_save", "cmd_load", "cmd_move", "cmd_list",
-                     "cmd_update"):
+                     "cmd_update", "cmd_migrate"):
             self.originals[name] = getattr(f, name)
             setattr(f, name, lambda args, n=name: self.calls.append((n, args)))
 
@@ -457,6 +475,23 @@ class CommandLine(unittest.TestCase):
     def test_move_needs_both_ends(self):
         with quiet(), self.assertRaises(SystemExit):
             self.run_ferry("move", "work:acme/memory")
+
+    def test_list_memory_is_a_flag(self):
+        self.run_ferry("list", "--memory", "work:acme")
+        name, args = self.calls[0]
+        self.assertEqual(name, "cmd_list")
+        self.assertTrue(args.memory)
+        self.assertEqual(args.ref, "work:acme")
+
+    def test_list_memory_needs_no_ref(self):
+        self.run_ferry("list", "--memory")
+        self.assertTrue(self.calls[0][1].memory)
+        self.assertIsNone(self.calls[0][1].ref)
+
+    def test_migrate_takes_a_store(self):
+        self.run_ferry("migrate", "work")
+        self.assertEqual(self.calls[0][0], "cmd_migrate")
+        self.assertEqual(self.calls[0][1].name, "work")
 
     def test_bare_list_is_the_same_as_stores(self):
         self.run_ferry("list")

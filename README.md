@@ -66,7 +66,9 @@ ferry load --memory <store>:<dir> [--force]
 ferry move <store>:<path> <store>:<dir> [--force]
 ferry move --memory <store>:<dir> <store>:<dir> [--force]
 ferry list [<store>[:<path>]]
+ferry list --memory [<store>[:<dir>]]
 ferry update [<store>]
+ferry migrate <store>
 ```
 
 ```sh
@@ -80,7 +82,9 @@ ferry memory                                  # notes in this directory
 ferry save bug-hunt to work:acme              # -> acme/bug-hunt.jsonl
 ferry save --memory to work:acme              # -> acme/memory/
 
-ferry list work
+ferry list work                               # its sessions
+ferry list --memory work                      # its memory
+ferry list --memory work:acme                 # the notes in one folder
 ferry load work:acme/bug-hunt                 # a session
 ferry load --memory work:acme                 # that folder's memory
 ferry update work                             # pull, and explain a divergence
@@ -111,15 +115,14 @@ store holds rather than deciding where something goes.
 the leaf goes along unchanged — the same rule `save` follows. A session's name
 lives inside its transcript, so a move that could rename the file would let the
 two disagree; not being able to say a new name means it cannot happen. To
-rename, `/rename` the session and save it again. `--memory` means what it
-means everywhere else, and for the same reason: paths are written without the
-`.jsonl`, so `acme/memory` alone cannot say whether you mean a session called
-memory or the folder's memory.
+rename, `/rename` the session and save it again.
 
 **Memory belongs to a directory, not a session.** Claude keeps it in
 `memory/*.md` beside the transcripts, shared by everything started there.
-`--memory` is a flag rather than a name, so it can never be confused with a
-session that happens to be called `memory`.
+
+**`--memory` says which of the two you mean, everywhere.** A store keeps
+sessions and memory in separate trees, so nothing has to be inferred from a
+path — and a session may be called `memory` like anything else.
 
 **A store is a plain git repo.** ferry only fast-forwards; it never merges.
 
@@ -142,16 +145,22 @@ is the directory's absolute path with every non-alphanumeric character replaced
 by `-`, truncated to 200 characters plus a hash if longer. ferry computes the
 same name, copies the `.jsonl` out or in, and commits.
 
-In the store:
+In the store, the two kinds live in two trees:
 
 ```
-acme/bug-hunt.jsonl     a transcript - the filename is its name
-acme/memory/            a memory directory, as .md files
+sessions/acme/bug-hunt.jsonl     a transcript - the filename is its name
+memories/acme/*.md               a directory's memory, as notes
 ```
 
-Plain files in plain directories. `ferry move` re-files one and pushes the
-commit; anything else — deleting, renaming a folder — is `git rm` and `git mv`
-in the checkout, without ferry's help.
+You never type `sessions/` or `memories/` — `ferry save bug-hunt to work:acme`
+and `ferry list work` say `acme`, as they always did. The split is there so the
+two cannot interfere: memory is written by replacing its directory wholesale,
+and in one shared tree that would take any transcript filed beside it with it.
+Separate trees make that impossible rather than merely discouraged.
+
+The cost is that `ferry list` no longer matches `git ls-files`; prefix a path
+with its tree when working in the checkout by hand. `ferry move` re-files
+something and pushes the commit; deleting is still `git rm` there.
 
 Only `save` writes to the remote. `load`, `list` and `update` never push, and
 `list` fetches without merging so it can always show what is really there,
@@ -162,7 +171,8 @@ even when your clone has diverged.
 - **Copies, not sync.** Saving replaces the store's copy with yours; loading
   replaces yours with the store's. No merging, and nothing happens on its own.
 - **Memory is replaced wholesale**, so notes that exist only on the other
-  machine are lost when you save over them.
+  machine are lost when you save over them. Only notes: transcripts are in
+  another tree and cannot be caught by it.
 - **Collisions are caught, not resolved.** ferry stops and tells you.
 - **git-crypt hides contents, not names.** Directory and file names, sizes and
   commit messages stay readable, so keep the store private.
@@ -184,7 +194,8 @@ fpath=(~/.local/share/zsh/site-functions $fpath)
 ```
 
 Completes commands, each command's flags, and store references — so
-`ferry load work:<TAB>` walks what the store actually holds. Session names are
+`ferry load work:<TAB>` walks what the store actually holds, and `--memory`
+changes what is offered, because it changes which tree is being asked about. Session names are
 not completed: naming them means reading every transcript in the directory,
 which takes about a second in a folder of any size, and that is too slow to sit
 behind a TAB press. `ferry sessions` lists them.

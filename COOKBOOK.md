@@ -11,6 +11,7 @@ Worked examples. Each one stands alone; skip to the situation you are in.
 - [See what a store holds without changing anything](#see-what-a-store-holds-without-changing-anything)
 - [Rename a session](#rename-a-session)
 - [Reorganise a store](#reorganise-a-store)
+- [Upgrading a store from before 1.2](#upgrading-a-store-from-before-12)
 - [When save refuses](#when-save-refuses)
 - [When update says DIVERGED](#when-update-says-diverged)
 - [Adopt a checkout you already have](#adopt-a-checkout-you-already-have)
@@ -119,16 +120,17 @@ Memory belongs to the directory, not to any session:
 ```sh
 cd ~/develop/acme
 ferry memory                        # what is here
-ferry save --memory to work:acme    # -> acme/memory/
+ferry save --memory to work:acme    # the store's memory for acme
 ```
 
-To read what the store holds before you take it, name the memory folder
-itself — you get the same listing `ferry memory` gives for the directory you
-are standing in:
+To read what the store holds before you take it, ask for memory rather than
+sessions — the folder listing tells you which directories have any, and naming
+one gives the same output `ferry memory` gives for the directory you are
+standing in:
 
 ```sh
-ferry list work:acme            # -> acme/memory   12 md   memory
-ferry list work:acme/memory     # the notes themselves, with descriptions
+ferry list --memory work         # every folder that has memory, and how much
+ferry list --memory work:acme    # the notes themselves, with descriptions
 ```
 
 On the other machine:
@@ -160,8 +162,9 @@ access.
 ## See what a store holds without changing anything
 
 ```sh
-ferry list work                 # everything
+ferry list work                 # every session
 ferry list work:acme            # one folder
+ferry list --memory work        # the memory it holds instead
 ```
 
 `list` fetches but never merges, so it always shows what is really on the
@@ -203,16 +206,14 @@ dropping into git:
 
 ```sh
 ferry move work:acme/bug-hunt work:archive    # -> archive/bug-hunt.jsonl
-ferry move --memory work:acme work:acme-v2    # -> acme-v2/memory
-ferry move work:old-project work:archive      # a whole folder
+ferry move --memory work:acme work:acme-v2    # acme's memory -> acme-v2
+ferry move work:old-project work:archive      # a whole folder of sessions
 ferry move work:archive/notes work:           # to the top of the store
 ```
 
 You name a *directory* and the leaf comes with it, the same rule `save`
-follows. `--memory` decides which one you mean when a folder holds both a
-memory directory and a session named `memory` - the same flag, for the same
-reason, as on `save` and `load`. One commit, pushed, recorded as a rename so
-history follows the file.
+follows. `--memory` says which of the two you mean, as it does everywhere else.
+One commit, pushed, recorded as a rename so history follows the file.
 
 It refuses if something is already at the destination, unless you pass
 `--force`, and it works inside one store only — two stores have two keys, so
@@ -220,6 +221,38 @@ crossing between them is a `load` and then a `save`.
 
 Nothing local changes. A machine that already loaded the old copy still has it,
 under the name it always had.
+
+## Upgrading a store from before 1.2
+
+Stores written by ferry 1.1 and earlier kept both kinds in one place —
+`acme/bug-hunt.jsonl` beside `acme/memory/`. From 1.2 they live in two trees,
+so that saving memory can never reach a transcript.
+
+Upgrade **every machine first**, because an older ferry will not find anything
+in a migrated store:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/gielfeldt/ferry/main/install.sh | sh
+ferry --version        # 1.2.0 or later, everywhere
+```
+
+Then, from any one of them, once per store:
+
+```sh
+ferry migrate work
+```
+
+It prints every move before making it, then commits and pushes the lot. Files
+that are neither transcripts nor notes are left where they are. Until you run
+it, ferry refuses to read the store and says so:
+
+```
+ferry: 'work' was filed by ferry 1.1 or older, which kept sessions and
+       memory in one tree (131 transcript(s)).
+       ferry migrate work      to move them, once, in one commit
+```
+
+Nothing in `~/.claude` is touched, and the old paths stay in git history.
 
 ## When save refuses
 
