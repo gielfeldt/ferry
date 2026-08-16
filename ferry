@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """ferry - carry Claude Code sessions between machines, using a git repo.
 
-    ferry repo add mine git@github.com:you/my-sessions.git
+    ferry repo add mine git@github.com:you/my-sessions.git --key ~/my-sessions.key
     ferry save bug-hunt as mine:acme/bug-hunt
     ferry load mine:acme/bug-hunt
 

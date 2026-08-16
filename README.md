@@ -39,9 +39,12 @@ Put that key somewhere safe. Without it the repo is unreadable. Then register it
 on each machine:
 
 ```sh
-ferry repo add mine git@github.com:you/my-sessions.git
-cd ~/.local/share/ferry/mine && git-crypt unlock ~/my-sessions.key
+ferry repo add mine git@github.com:you/my-sessions.git --key ~/my-sessions.key
 ```
+
+`--key` clones the repo and hands the key to `git-crypt unlock`. ferry stores no
+keys of its own — without it, a fresh clone stays locked and every save is
+refused.
 
 ferry refuses to save into a repo that has no git-crypt, unless you pass
 `--allow-plaintext`.
