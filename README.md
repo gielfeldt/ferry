@@ -52,7 +52,8 @@ ferry refuses to save into a repo that has no git-crypt, unless you pass
 ## Using it
 
 ```sh
-ferry sessions                                  # what is in this directory
+ferry sessions                                  # sessions in this directory
+ferry memory                                    # what this directory remembers
 ferry save <name> as <repo>:<dir>               # -> <dir>/<name>.jsonl
 ferry save memory as <repo>:<dir>               # -> <dir>/memory/
 ferry load <repo>:<path>                        # copy it back, here

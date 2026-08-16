@@ -186,6 +186,35 @@ def ai_title(jsonl):
     return None
 
 
+def note_description(md):
+    """A one-line summary of a memory note.
+
+    Notes carry a description in YAML frontmatter. Falling back to the first
+    heading, then the first real line, means a hand-written note still shows
+    something useful instead of a blank column.
+    """
+    try:
+        text = md.read_text(errors="replace")
+    except OSError:
+        return ""
+    lines = text.splitlines()
+    if lines and lines[0].strip() == "---":
+        for i, line in enumerate(lines[1:], 1):
+            if line.strip() == "---":
+                break
+            if line.startswith("description:"):
+                d = line.split(":", 1)[1].strip().strip('"\'')
+                return d.replace('\\"', '"').replace("\\'", "'")
+        lines = lines[i + 1:]
+    for line in lines:
+        line = line.strip()
+        if line.startswith("#"):
+            return line.lstrip("#").strip()
+        if line and not line.startswith("---"):
+            return line
+    return ""
+
+
 def session_id_of(jsonl):
     """The session id recorded inside a transcript."""
     try:
@@ -511,6 +540,30 @@ def cmd_update(args):
               f"the worst case is re-saving them.")
 
 
+def cmd_memory(args):
+    """What this directory remembers, so you know what you would be saving."""
+    mem = slug_dir() / "memory"
+    notes = sorted(p for p in mem.glob("*.md") if p.name != "MEMORY.md") \
+        if mem.is_dir() else []
+    index = mem / "MEMORY.md"
+
+    if not notes and not index.exists():
+        print(f"no memory for {Path.cwd()}")
+        return
+
+    width = min(max((len(p.name) for p in notes), default=0), 32)
+    for p in notes:
+        d = note_description(p)
+        if len(d) > 68:
+            d = d[:67] + "\u2026"
+        print(f"  {p.name:<{width}}  {d}")
+    if index.exists():
+        entries = sum(1 for l in index.read_text(errors="replace").splitlines()
+                      if l.strip().startswith(("-", "*")))
+        print(f"\n  {'MEMORY.md':<{width}}  index of {entries} note(s)")
+    print(f"\n  {len(notes)} note(s) in {mem}")
+
+
 def cmd_sessions(args):
     """What is in this directory, so you know what you can save.
 
@@ -590,6 +643,9 @@ def main():
 
     p = sub.add_parser("sessions", help="what is in this directory")
     p.set_defaults(func=cmd_sessions)
+
+    p = sub.add_parser("memory", help="what this directory remembers")
+    p.set_defaults(func=cmd_memory)
 
     args = ap.parse_args()
     if not args.cmd:
