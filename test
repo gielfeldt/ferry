@@ -128,6 +128,41 @@ class NoteDescription(unittest.TestCase):
         self.assertEqual(f.note_description(Path("/nonexistent/x.md")), "")
 
 
+class PrintNotes(unittest.TestCase):
+    """One printer for both `memory` here and `list` in a store, so a memory
+    folder reads the same either way."""
+
+    def mem(self):
+        d = Path(tempfile.mkdtemp())
+        (d / "one.md").write_text("---\ndescription: The first\n---\n")
+        (d / "two.md").write_text("---\ndescription: The second\n---\n")
+        return d
+
+    def test_lists_the_notes_with_their_descriptions(self):
+        with quiet() as (out, _):
+            f.print_notes(self.mem())
+        text = out.getvalue()
+        self.assertIn("one.md", text)
+        self.assertIn("The first", text)
+        self.assertIn("two.md", text)
+
+    def test_counts_the_index_without_listing_it_as_a_note(self):
+        d = self.mem()
+        (d / "MEMORY.md").write_text("- [One](one.md) - a\n- [Two](two.md) - b\n")
+        with quiet() as (out, _):
+            f.print_notes(d)
+        text = out.getvalue()
+        self.assertIn("index of 2 note(s)", text)
+        self.assertEqual(text.count("MEMORY.md"), 1)
+
+    def test_an_index_alone_still_prints(self):
+        d = Path(tempfile.mkdtemp())
+        (d / "MEMORY.md").write_text("- [One](one.md) - a\n")
+        with quiet() as (out, _):
+            f.print_notes(d)
+        self.assertIn("index of 1 note(s)", out.getvalue())
+
+
 class TranscriptFields(unittest.TestCase):
     """Reading identity out of a transcript, which is what makes the sidecar
     unnecessary and the collision check possible."""

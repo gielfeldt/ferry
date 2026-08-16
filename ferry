@@ -546,6 +546,26 @@ def cmd_load(args):
     print(f"  resume it here with:  claude --resume {name}")
 
 
+def print_notes(mem):
+    """The notes in a memory directory, one per line, with their descriptions.
+
+    Shared by `memory` and `list` so a folder reads the same whether it is the
+    one you are standing in or one in a store.
+    """
+    notes = sorted(p for p in mem.glob("*.md") if p.name != "MEMORY.md")
+    index = mem / "MEMORY.md"
+    width = min(max((len(p.name) for p in notes), default=0), 32)
+    for p in notes:
+        d = note_description(p)
+        if len(d) > 68:
+            d = d[:67] + "…"
+        print(f"  {p.name:<{width}}  {d}")
+    if index.exists():
+        entries = sum(1 for l in index.read_text(errors="replace").splitlines()
+                      if l.strip().startswith(("-", "*")))
+        print(f"\n  {'MEMORY.md':<{width}}  index of {entries} note(s)")
+
+
 def cmd_list(args):
     if not args.ref:
         return cmd_stores(args)      # bare `list` is the same question
@@ -558,6 +578,11 @@ def cmd_list(args):
     if not root.exists():
         die(f"nothing at {args.ref}")
     found = False
+    # A memory directory named outright. rglob never yields root itself, so
+    # without this the one ref that points straight at memory reads as empty.
+    if any(root.glob("*.md")):
+        print_notes(root)
+        found = True
     for f in sorted(root.rglob("*.jsonl")):
         found = True
         rel = f.relative_to(repo).as_posix()[:-6]
@@ -728,16 +753,7 @@ def cmd_memory(args):
         print(f"no memory for {Path.cwd()}")
         return
 
-    width = min(max((len(p.name) for p in notes), default=0), 32)
-    for p in notes:
-        d = note_description(p)
-        if len(d) > 68:
-            d = d[:67] + "\u2026"
-        print(f"  {p.name:<{width}}  {d}")
-    if index.exists():
-        entries = sum(1 for l in index.read_text(errors="replace").splitlines()
-                      if l.strip().startswith(("-", "*")))
-        print(f"\n  {'MEMORY.md':<{width}}  index of {entries} note(s)")
+    print_notes(mem)
     print(f"\n  {len(notes)} note(s) in {mem}")
 
 

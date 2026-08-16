@@ -121,6 +121,15 @@ ferry memory                        # what is here
 ferry save --memory to work:acme    # -> acme/memory/
 ```
 
+To read what the store holds before you take it, name the memory folder
+itself — you get the same listing `ferry memory` gives for the directory you
+are standing in:
+
+```sh
+ferry list work:acme            # -> acme/memory   12 md   memory
+ferry list work:acme/memory     # the notes themselves, with descriptions
+```
+
 On the other machine:
 
 ```sh
