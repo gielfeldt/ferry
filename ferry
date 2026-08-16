@@ -196,6 +196,29 @@ def ai_title(jsonl):
     return None
 
 
+def first_prompt(jsonl):
+    """The opening line of the conversation.
+
+    A transcript need not carry any title at all - no name you set, and no
+    aiTitle if Claude never made one. The picker still shows something for
+    those, because the conversation itself says what it is about.
+    """
+    try:
+        with jsonl.open(errors="replace") as fh:
+            for line in fh:
+                if '"type":"user"' not in line:
+                    continue
+                try:
+                    c = (json.loads(line).get("message") or {}).get("content")
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(c, str) and c.strip() and not c.startswith("<"):
+                    return " ".join(c.split())
+    except OSError:
+        pass
+    return None
+
+
 def note_description(md):
     """A one-line summary of a memory note.
 
@@ -636,8 +659,10 @@ def cmd_sessions(args):
         # ones can be used as a name in `ferry save`.
         name = session_name(f) or ""
         if not name:
-            title = ai_title(f)
-            name = f"* {title}" if title else ""
+            hint = ai_title(f) or first_prompt(f)
+            if hint and len(hint) > 72:
+                hint = hint[:71] + "\u2026"
+            name = f"* {hint}" if hint else ""
         rows.append((f.stat().st_mtime, f.stem, f.stat().st_size, name))
     if not rows:
         print(f"no sessions for {Path.cwd()}")
@@ -649,7 +674,8 @@ def cmd_sessions(args):
         print(f"  {'memory':<36}  {'':10}  {n:6} md   "
               f"(ferry save --memory to <store>:<dir>)")
     if any(r[3].startswith("* ") for r in rows):
-        print("\n  * Claude's own title, not a name - /rename it before saving")
+        print("\n  * a title or opening line, not a name - "
+              "/rename it before saving")
 
 
 USAGE = """\

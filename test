@@ -168,6 +168,24 @@ class TranscriptFields(unittest.TestCase):
         p = tmpfile('{"a":1}\n{"aiTitle":"Fix the parser"}\n')
         self.assertEqual(f.ai_title(p), "Fix the parser")
 
+    def test_first_prompt_is_the_opening_line(self):
+        p = tmpfile('{"type":"mode"}\n'
+                    '{"type":"user","message":{"content":"Fix the parser"}}\n')
+        self.assertEqual(f.first_prompt(p), "Fix the parser")
+
+    def test_first_prompt_skips_injected_context(self):
+        """<system-reminder> and friends are not something the user typed."""
+        p = tmpfile('{"type":"user","message":{"content":"<system-reminder>x"}}\n'
+                    '{"type":"user","message":{"content":"the real one"}}\n')
+        self.assertEqual(f.first_prompt(p), "the real one")
+
+    def test_first_prompt_collapses_whitespace(self):
+        p = tmpfile('{"type":"user","message":{"content":"a\\n\\n  b   c"}}\n')
+        self.assertEqual(f.first_prompt(p), "a b c")
+
+    def test_first_prompt_none_when_nothing_was_said(self):
+        self.assertIsNone(f.first_prompt(tmpfile('{"type":"mode"}\n')))
+
     def test_no_ai_title_is_none(self):
         self.assertIsNone(f.ai_title(tmpfile('{"a":1}\n')))
 
