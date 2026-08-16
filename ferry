@@ -359,6 +359,9 @@ def cmd_list(args):
         return cmd_repo_list(args)
     alias, _, path = args.ref.partition(":")
     repo = repo_dir(alias)
+    # Listing has to fetch, or the only way to see what another machine saved
+    # would be to run something that changes state.
+    pull(repo)
     root = repo / path.strip("/") if path else repo
     if not root.exists():
         die(f"nothing at {args.ref}")
