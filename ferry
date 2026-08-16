@@ -10,6 +10,7 @@ import argparse
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -620,8 +621,20 @@ def store_refs(prefix):
 
 
 def cmd_complete(args):
-    """Emit completion candidates. Driven by the shell, not by you."""
+    """Emit completion candidates. Driven by the shell, not by you.
+
+    With --line the whole command line is parsed here rather than trusting the
+    shell's word splitting: bash breaks words on ':' (it is in COMP_WORDBREAKS),
+    so `store:pers` would arrive as three words and the store ref would be lost.
+    """
     words = args.words
+    if args.line is not None:
+        try:
+            words = shlex.split(args.line)
+        except ValueError:
+            words = args.line.split()
+        if args.line[-1:].isspace():
+            words.append("")
     cur = words[-1] if words else ""
     prev = [w for w in words[:-1] if not w.startswith("-")]
 
@@ -840,6 +853,7 @@ def main():
     p.set_defaults(func=cmd_list)
 
     p = sub.add_parser("complete")          # no help: hidden from --help
+    p.add_argument("--line", help="the raw command line, split here not by the shell")
     p.add_argument("words", nargs="*")
     p.set_defaults(func=cmd_complete)
 

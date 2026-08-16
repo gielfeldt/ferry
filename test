@@ -265,6 +265,22 @@ class Completion(unittest.TestCase):
     def test_does_not_offer_another_commands_flags(self):
         self.assertNotIn("--allow-plaintext", self.complete("ferry", "load", "-"))
 
+    def complete_line(self, line):
+        sys.argv = ["ferry", "complete", "--line", line]
+        with quiet() as (out, _):
+            f.main()
+        return out.getvalue().split()
+
+    def test_line_mode_keeps_a_colon_ref_whole(self):
+        """bash splits on ':', so the line is parsed here instead."""
+        self.assertEqual(self.complete_line("ferry lo"), ["load"])
+
+    def test_line_mode_knows_a_trailing_space_starts_a_new_word(self):
+        self.assertEqual(self.complete_line("ferry lo "), [])
+
+    def test_line_mode_survives_an_unbalanced_quote(self):
+        self.complete_line("ferry save \"unclosed")
+
     def test_complete_is_hidden_from_help(self):
         self.assertNotIn("complete", f.USAGE)
 
