@@ -600,6 +600,8 @@ def store_refs(prefix, kind="any"):
 
     kind="memory" offers only directories that hold memory, because that is
     what `--memory` takes: the folder, never the memory/ inside it.
+    kind="session" is the mirror image: transcripts and the folders leading to
+    them, never a memory/ - `load` without --memory cannot take one.
     """
     names = sorted(repos())
     if ":" not in prefix:
@@ -623,6 +625,8 @@ def store_refs(prefix, kind="any"):
                 parent = f.parent.relative_to(root).as_posix()
                 out.append(f"{alias}:{parent}" if parent != "." else f"{alias}:")
         elif f.is_dir():
+            if kind == "session" and f.name == "memory":
+                continue                        # not loadable as a session
             out.append(f"{alias}:{rel}")        # for navigating deeper
         elif f.suffix == ".jsonl":
             out.append(f"{alias}:{rel[:-6]}")
@@ -661,7 +665,7 @@ def cmd_complete(args):
             out = [n for n in sorted(repos()) if n.startswith(cur)] \
                 if cmd == "update" else store_refs(cur)
         elif cmd == "load":
-            out = store_refs(cur, "memory" if memory else "any")
+            out = store_refs(cur, "memory" if memory else "session")
         elif cmd == "save":
             # <session> [to] <store>:<dir> - offer the connector and the store
             out = store_refs(cur)

@@ -284,6 +284,17 @@ class Completion(unittest.TestCase):
     def test_memory_flag_completes(self):
         self.assertEqual(self.complete_line("ferry load --mem"), ["--memory"])
 
+    def test_load_and_load_memory_are_mirror_images(self):
+        """Neither should offer what the other takes."""
+        plain = self.complete_line("ferry load store:")
+        mem = self.complete_line("ferry load --memory store:")
+        if not plain and not mem:
+            self.skipTest("no store registered in this environment")
+        self.assertFalse([c for c in plain if c.endswith("/memory")],
+                         "plain load offered a memory directory")
+        self.assertFalse([c for c in mem if c.endswith("/memory")],
+                         "--memory offered the memory/ instead of its parent")
+
     def test_complete_is_hidden_from_help(self):
         self.assertNotIn("complete", f.USAGE)
 
