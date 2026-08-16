@@ -487,7 +487,8 @@ def main():
     ap = argparse.ArgumentParser(prog="ferry", description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--version", action="version", version=f"ferry {__version__}")
-    sub = ap.add_subparsers(dest="cmd", required=True, metavar="<command>")
+    # Not required: bare `ferry` should show the help rather than an error.
+    sub = ap.add_subparsers(dest="cmd", metavar="<command>")
 
     p = sub.add_parser("repo", help="the git repos you carry sessions to")
     ps = p.add_subparsers(dest="sub", required=True, metavar="<command>")
@@ -529,6 +530,9 @@ def main():
     p.set_defaults(func=cmd_sessions)
 
     args = ap.parse_args()
+    if not args.cmd:
+        ap.print_help()
+        return
 
     # `save X as repo:path` reads better than `save X repo:path`, so the word
     # "as" is allowed and simply ignored.
