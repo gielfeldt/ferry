@@ -1,0 +1,254 @@
+#!/usr/bin/env python3
+"""ferry's tests.
+
+    ./test            run everything
+    ./test -v         with each case named
+
+Self-contained on purpose: no git, no network, no ~/.claude, nothing installed.
+Everything here is either a pure function or a file in a temporary directory,
+so it runs the same on a laptop and on a fresh CI machine.
+
+That rules out end-to-end coverage of the git side, which is deliberate for
+now - those tests need a real repo and git-crypt, and they belong in a separate
+script that CI can skip.
+"""
+import contextlib
+import importlib.util
+import io
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+
+FERRY = Path(__file__).resolve().parent / "ferry"
+
+
+def load():
+    """Import ferry, which has no .py suffix, as a module."""
+    spec = importlib.util.spec_from_loader("ferry", loader=None)
+    mod = importlib.util.module_from_spec(spec)
+    mod.__file__ = str(FERRY)
+    exec(compile(FERRY.read_text(), str(FERRY), "exec"), mod.__dict__)
+    return mod
+
+
+f = load()
+
+
+@contextlib.contextmanager
+def quiet():
+    """Swallow the output of a command under test."""
+    out, err = io.StringIO(), io.StringIO()
+    with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+        yield out, err
+
+
+def tmpfile(text, suffix=".jsonl"):
+    fh = tempfile.NamedTemporaryFile("w", suffix=suffix, delete=False)
+    fh.write(text)
+    fh.close()
+    return Path(fh.name)
+
+
+class Slug(unittest.TestCase):
+    """The name Claude Code derives for a directory. Getting this wrong means
+    looking in the wrong place, silently."""
+
+    def test_replaces_every_non_alphanumeric(self):
+        self.assertEqual(f.slug_dir("/home/user/dev/my-app").name,
+                         "-home-user-dev-my-app")
+
+    def test_keeps_case_and_digits(self):
+        self.assertEqual(f.slug_dir("/srv/App2/Thing_X").name,
+                         "-srv-App2-Thing-X")
+
+    def test_long_paths_are_truncated_with_a_hash(self):
+        long = "/" + "/".join("segment%02d" % i for i in range(40))
+        name = f.slug_dir(long).name
+        self.assertLessEqual(len(name), f.SLUG_MAX + 16)
+        self.assertGreater(len(name), f.SLUG_MAX)
+        self.assertTrue(name.startswith("-segment00-"))
+
+    def test_the_hash_is_stable_and_path_specific(self):
+        a = "/" + "x" * 300
+        b = "/" + "x" * 299 + "y"
+        self.assertEqual(f.slug_dir(a).name, f.slug_dir(a).name)
+        self.assertNotEqual(f.slug_dir(a).name, f.slug_dir(b).name)
+
+
+class SplitRef(unittest.TestCase):
+    """<store>:<path> parsing, including the paths it must refuse."""
+
+    def test_splits_store_from_path(self):
+        self.assertEqual(f.split_ref("work:acme/bug-hunt"),
+                         ("work", "acme/bug-hunt"))
+
+    def test_strips_surrounding_slashes(self):
+        self.assertEqual(f.split_ref("work:/acme/"), ("work", "acme"))
+
+    def test_requires_a_colon(self):
+        with quiet(), self.assertRaises(SystemExit):
+            f.split_ref("acme/bug-hunt")
+
+    def test_rejects_escaping_the_store(self):
+        for bad in ("work:../secrets", "work:acme/../../etc", "work:.ssh"):
+            with self.subTest(bad=bad), quiet(), self.assertRaises(SystemExit):
+                f.split_ref(bad)
+
+    def test_empty_path_is_the_top_of_the_store_only_for_directories(self):
+        self.assertEqual(f.split_ref("work:", directory=True), ("work", ""))
+        with quiet(), self.assertRaises(SystemExit):
+            f.split_ref("work:")
+
+
+class NoteDescription(unittest.TestCase):
+    """What `ferry memory` shows for each note."""
+
+    def test_reads_frontmatter(self):
+        p = tmpfile("---\nname: x\ndescription: Keeps it short\n---\n\nbody\n",
+                    ".md")
+        self.assertEqual(f.note_description(p), "Keeps it short")
+
+    def test_unquotes_and_unescapes(self):
+        p = tmpfile('---\ndescription: "He said \\"no\\""\n---\n', ".md")
+        self.assertEqual(f.note_description(p), 'He said "no"')
+
+    def test_falls_back_to_the_first_heading(self):
+        p = tmpfile("---\nname: x\n---\n\n# A heading\n\ntext\n", ".md")
+        self.assertEqual(f.note_description(p), "A heading")
+
+    def test_falls_back_to_the_first_line(self):
+        p = tmpfile("just a note\nmore\n", ".md")
+        self.assertEqual(f.note_description(p), "just a note")
+
+    def test_empty_file_is_empty(self):
+        self.assertEqual(f.note_description(tmpfile("", ".md")), "")
+
+    def test_missing_file_does_not_raise(self):
+        self.assertEqual(f.note_description(Path("/nonexistent/x.md")), "")
+
+
+class TranscriptFields(unittest.TestCase):
+    """Reading identity out of a transcript, which is what makes the sidecar
+    unnecessary and the collision check possible."""
+
+    def test_finds_the_session_id(self):
+        p = tmpfile('{"type":"mode"}\n{"sessionId":"abc-123","type":"user"}\n')
+        self.assertEqual(f.session_id_of(p), "abc-123")
+
+    def test_returns_none_without_one(self):
+        self.assertIsNone(f.session_id_of(tmpfile('{"type":"mode"}\n')))
+
+    def test_survives_malformed_lines(self):
+        p = tmpfile('not json at all\n{"sessionId":"abc-123"}\n')
+        self.assertEqual(f.session_id_of(p), "abc-123")
+
+    def test_finds_the_ai_title(self):
+        p = tmpfile('{"a":1}\n{"aiTitle":"Fix the parser"}\n')
+        self.assertEqual(f.ai_title(p), "Fix the parser")
+
+    def test_no_ai_title_is_none(self):
+        self.assertIsNone(f.ai_title(tmpfile('{"a":1}\n')))
+
+
+class RefuseShrink(unittest.TestCase):
+    """Transcripts only grow, so a shorter replacement means lost turns."""
+
+    def setUp(self):
+        self.small = tmpfile("x" * 10)
+        self.big = tmpfile("x" * 100)
+
+    def test_refuses_a_smaller_source(self):
+        with quiet(), self.assertRaises(SystemExit):
+            f.refuse_shrink(self.small, self.big, False, "saving")
+
+    def test_allows_a_larger_source(self):
+        f.refuse_shrink(self.big, self.small, False, "saving")
+
+    def test_allows_the_same_size(self):
+        f.refuse_shrink(self.small, self.small, False, "saving")
+
+    def test_force_overrides(self):
+        f.refuse_shrink(self.small, self.big, True, "saving")
+
+    def test_a_missing_destination_is_fine(self):
+        f.refuse_shrink(self.small, Path("/nonexistent/x.jsonl"), False, "saving")
+
+
+class CommandLine(unittest.TestCase):
+    """Argument parsing, stubbing the commands so nothing touches the disk."""
+
+    def setUp(self):
+        self.calls = []
+        self.originals = {}
+        for name in ("cmd_add", "cmd_stores", "cmd_sessions", "cmd_memory",
+                     "cmd_save", "cmd_load", "cmd_list", "cmd_update"):
+            self.originals[name] = getattr(f, name)
+            setattr(f, name, lambda args, n=name: self.calls.append((n, args)))
+
+    def tearDown(self):
+        for name, fn in self.originals.items():
+            setattr(f, name, fn)
+
+    def run_ferry(self, *argv):
+        sys.argv = ["ferry", *argv]
+        with quiet() as (out, err):
+            f.main()
+        return out.getvalue(), err.getvalue()
+
+    def test_bare_ferry_prints_help(self):
+        out, _ = self.run_ferry()
+        self.assertIn("usage:", out)
+        self.assertIn("ferry save", out)
+        self.assertEqual(self.calls, [])
+
+    def test_save_drops_the_word_to(self):
+        self.run_ferry("save", "bug-hunt", "to", "work:acme")
+        name, args = self.calls[0]
+        self.assertEqual(name, "cmd_save")
+        self.assertEqual(args.words, ["bug-hunt", "to", "work:acme"])
+        self.assertFalse(args.memory)
+
+    def test_save_works_without_to(self):
+        self.run_ferry("save", "bug-hunt", "work:acme")
+        self.assertEqual(self.calls[0][1].words, ["bug-hunt", "work:acme"])
+
+    def test_save_memory_is_a_flag(self):
+        self.run_ferry("save", "--memory", "to", "work:acme")
+        self.assertTrue(self.calls[0][1].memory)
+
+    def test_load_memory_is_a_flag(self):
+        self.run_ferry("load", "--memory", "work:acme")
+        name, args = self.calls[0]
+        self.assertEqual(name, "cmd_load")
+        self.assertTrue(args.memory)
+
+    def test_load_drops_the_word_to(self):
+        self.run_ferry("load", "work:acme/bug-hunt")
+        self.assertEqual(self.calls[0][1].target, "work:acme/bug-hunt")
+
+    def test_unknown_command_exits(self):
+        with quiet(), self.assertRaises(SystemExit):
+            sys.argv = ["ferry", "frobnicate"]
+            f.main()
+
+    def test_version_exits_cleanly(self):
+        with quiet() as (out, _), self.assertRaises(SystemExit) as e:
+            sys.argv = ["ferry", "--version"]
+            f.main()
+        self.assertEqual(e.exception.code, 0)
+
+    def test_every_command_in_the_usage_block_is_real(self):
+        """The synopsis is documentation; it should not drift from the parser."""
+        commands = {line.split()[1] for line in f.USAGE.splitlines()
+                    if line.strip().startswith("ferry ")}
+        for c in commands:
+            with self.subTest(command=c):
+                with quiet(), self.assertRaises(SystemExit) as e:
+                    sys.argv = ["ferry", c, "--help"]
+                    f.main()
+                self.assertEqual(e.exception.code, 0)
+
+
+if __name__ == "__main__":
+    unittest.main(verbosity=2 if "-v" in sys.argv else 1)
