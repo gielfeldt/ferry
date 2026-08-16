@@ -577,6 +577,78 @@ def cmd_list(args):
               f"ferry update {alias}")
 
 
+COMMANDS = {
+    "add":      ["--key", "--path"],
+    "stores":   [],
+    "sessions": [],
+    "memory":   [],
+    "save":     ["--memory", "--force", "--allow-plaintext"],
+    "load":     ["--memory", "--force", "--name"],
+    "list":     [],
+    "update":   [],
+}
+
+
+def store_refs(prefix):
+    """<store>: and <store>:<path> candidates for whatever is typed so far.
+
+    Only ever walks the store's own directory, so it stays fast enough for a
+    TAB press. Session names are deliberately not offered - naming them means
+    reading every transcript in the directory, which takes about a second in a
+    folder of any size.
+    """
+    names = sorted(repos())
+    if ":" not in prefix:
+        return [n + ":" for n in names if n.startswith(prefix)]
+
+    alias, _, path = prefix.partition(":")
+    if alias not in names:
+        return []
+    root = Path(repos()[alias]["path"])
+    if not root.is_dir():
+        return []
+    out = []
+    for f in root.rglob("*"):
+        if ".git" in f.parts:
+            continue
+        rel = f.relative_to(root).as_posix()
+        if f.is_dir():
+            out.append(f"{alias}:{rel}")
+        elif f.suffix == ".jsonl":
+            out.append(f"{alias}:{rel[:-6]}")
+    return sorted(c for c in out if c.startswith(prefix))
+
+
+def cmd_complete(args):
+    """Emit completion candidates. Driven by the shell, not by you."""
+    words = args.words
+    cur = words[-1] if words else ""
+    prev = [w for w in words[:-1] if not w.startswith("-")]
+
+    if len(prev) <= 1:                      # still choosing the command
+        print("\n".join(c for c in sorted(COMMANDS) if c.startswith(cur)))
+        return
+
+    cmd = prev[1]
+    out = [f for f in COMMANDS.get(cmd, []) if f.startswith(cur)] if \
+        cur.startswith("-") else []
+
+    if not cur.startswith("-"):
+        if cmd in ("list", "update"):
+            out = [n for n in sorted(repos()) if n.startswith(cur)] \
+                if cmd == "update" else store_refs(cur)
+        elif cmd == "load":
+            out = store_refs(cur)
+        elif cmd == "save":
+            # <session> [to] <store>:<dir> - offer the connector and the store
+            out = store_refs(cur)
+            if len(prev) == 3 and "to".startswith(cur):
+                out.append("to")
+        elif cmd == "add" and len(prev) > 2:
+            out = []                        # a url or a new name; nothing to offer
+    print("\n".join(out))
+
+
 def cmd_update(args):
     """Bring a clone up to date, and explain it if that is not possible."""
     aliases = [args.name] if args.name else sorted(repos())
@@ -766,6 +838,10 @@ def main():
     p = sub.add_parser("list", help="what a store holds, or the stores")
     p.add_argument("ref", nargs="?", metavar="<store>[:<path>]")
     p.set_defaults(func=cmd_list)
+
+    p = sub.add_parser("complete")          # no help: hidden from --help
+    p.add_argument("words", nargs="*")
+    p.set_defaults(func=cmd_complete)
 
     p = sub.add_parser("update", help="pull a store up to date")
     p.add_argument("name", nargs="?", metavar="<store>")

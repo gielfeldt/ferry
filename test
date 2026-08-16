@@ -238,6 +238,37 @@ class RefuseShrink(unittest.TestCase):
         f.refuse_shrink(self.small, Path("/nonexistent/x.jsonl"), False, "saving")
 
 
+class Completion(unittest.TestCase):
+    """Candidates the shell asks for. Never reads a transcript, so it stays
+    fast enough for a TAB press."""
+
+    def complete(self, *words):
+        sys.argv = ["ferry", "complete", *words]
+        with quiet() as (out, _):
+            f.main()
+        return out.getvalue().split()
+
+    def test_offers_the_commands(self):
+        got = self.complete("ferry", "")
+        for c in ("add", "save", "load", "list", "update", "sessions",
+                  "memory", "stores"):
+            self.assertIn(c, got)
+
+    def test_filters_commands_by_prefix(self):
+        self.assertEqual(self.complete("ferry", "lo"), ["load"])
+
+    def test_offers_flags_for_the_command(self):
+        got = self.complete("ferry", "save", "x", "-")
+        self.assertIn("--memory", got)
+        self.assertIn("--allow-plaintext", got)
+
+    def test_does_not_offer_another_commands_flags(self):
+        self.assertNotIn("--allow-plaintext", self.complete("ferry", "load", "-"))
+
+    def test_complete_is_hidden_from_help(self):
+        self.assertNotIn("complete", f.USAGE)
+
+
 class CommandLine(unittest.TestCase):
     """Argument parsing, stubbing the commands so nothing touches the disk."""
 

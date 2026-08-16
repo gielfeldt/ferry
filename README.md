@@ -152,6 +152,22 @@ even when your clone has diverged.
 - **git-crypt hides contents, not names.** Directory and file names, sizes and
   commit messages stay readable, so keep the store private.
 
+## Completion
+
+```sh
+# bash
+source /path/to/ferry/completions/ferry.bash
+
+# zsh, after compinit
+source /path/to/ferry/completions/ferry.zsh
+```
+
+Completes commands, each command's flags, and store references — so
+`ferry load work:<TAB>` walks what the store actually holds. Session names are
+not completed: naming them means reading every transcript in the directory,
+which takes about a second in a folder of any size, and that is too slow to sit
+behind a TAB press. `ferry sessions` lists them.
+
 ## Tests
 
 ```sh
