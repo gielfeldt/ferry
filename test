@@ -128,6 +128,46 @@ class NoteDescription(unittest.TestCase):
         self.assertEqual(f.note_description(Path("/nonexistent/x.md")), "")
 
 
+class MoveSource(unittest.TestCase):
+    """A store can hold acme/memory.jsonl and acme/memory/ at once. Which one a
+    move names is the whole reason --memory exists here."""
+
+    def setUp(self):
+        self.repo = Path(tempfile.mkdtemp())
+        (self.repo / "proj" / "memory").mkdir(parents=True)
+        (self.repo / "proj" / "memory.jsonl").write_text("the session\n")
+        (self.repo / "proj" / "memory" / "one.md").write_text("the memory\n")
+        (self.repo / "proj" / "other.jsonl").write_text("bystander\n")
+
+    def test_memory_picks_the_directory(self):
+        got = f.move_source(self.repo, "proj", True)
+        self.assertEqual(got, self.repo / "proj" / "memory")
+        self.assertTrue(got.is_dir())
+
+    def test_without_the_flag_picks_the_session_of_that_name(self):
+        got = f.move_source(self.repo, "proj/memory", False)
+        self.assertEqual(got, self.repo / "proj" / "memory.jsonl")
+        self.assertEqual(got.read_text(), "the session\n")
+
+    def test_a_folder_moves_when_no_session_matches(self):
+        self.assertEqual(f.move_source(self.repo, "proj", False),
+                         self.repo / "proj")
+
+    def test_a_memory_folder_alone_is_refused_not_guessed(self):
+        (self.repo / "proj" / "memory.jsonl").unlink()
+        with quiet() as (_, err), self.assertRaises(SystemExit):
+            f.move_source(self.repo, "proj/memory", False)
+        self.assertIn("--memory", err.getvalue())
+
+    def test_missing_memory_says_so(self):
+        with quiet(), self.assertRaises(SystemExit):
+            f.move_source(self.repo, "nope", True)
+
+    def test_missing_session_says_so(self):
+        with quiet(), self.assertRaises(SystemExit):
+            f.move_source(self.repo, "proj/nope", False)
+
+
 class PrintNotes(unittest.TestCase):
     """One printer for both `memory` here and `list` in a store, so a memory
     folder reads the same either way."""

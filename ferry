@@ -550,6 +550,37 @@ def cmd_load(args):
     print(f"  resume it here with:  claude --resume {name}")
 
 
+def move_source(repo, path, memory, alias="store", dest="<store>:<dir>"):
+    """Which file or directory a move ref actually names.
+
+    A store can hold acme/memory.jsonl and acme/memory/ side by side, and refs
+    are written without the .jsonl - so `acme/memory` alone does not say which.
+    The flag decides, exactly as it does for save and load. They never collide
+    on disk, so keeping them apart is only a matter of picking the right name
+    here; everything after this point is the same operation either way.
+    """
+    if memory:
+        src = repo / f"{path}/memory" if path else repo / "memory"
+        if not src.is_dir():
+            die(f"no memory at {alias}:{path}")
+        return src
+
+    src = repo / f"{path}.jsonl"
+    if src.is_file():
+        return src
+    # Falling back to a plain directory is what lets a whole folder move. Never
+    # onto a memory/ though: that is the one the flag exists for, and guessing
+    # would be the thing the flag was added to avoid.
+    src = repo / path
+    if src.is_dir() and src.name == "memory":
+        parent = path.rsplit("/", 1)[0] if "/" in path else ""
+        die(f"{alias}:{path} is a memory directory - "
+            f"ferry move --memory {alias}:{parent} {dest}")
+    if not src.exists():
+        die(f"nothing at {alias}:{path}")
+    return src
+
+
 def cmd_move(args):
     """Re-file something inside a store, keeping the name it already has.
 
@@ -576,24 +607,7 @@ def cmd_move(args):
     repo = repo_dir(src_alias)
     pull(repo)
 
-    if args.memory:
-        src = repo / f"{src_path}/memory" if src_path else repo / "memory"
-        if not src.is_dir():
-            die(f"no memory at {src_alias}:{src_path}")
-    else:
-        # Paths are written without the .jsonl, so a session is looked up the
-        # way `load` looks one up. Falling back to a plain directory lets a
-        # whole folder be moved - but never onto memory/, which has the flag.
-        src = repo / f"{src_path}.jsonl"
-        if not src.is_file():
-            src = repo / src_path
-            if src.is_dir() and src.name == "memory":
-                die(f"{src_alias}:{src_path} is a memory directory - "
-                    f"ferry move --memory {src_alias}:"
-                    f"{src_path.rsplit('/', 1)[0] if '/' in src_path else ''} "
-                    f"{args.dest}")
-            if not src.exists():
-                die(f"nothing at {args.source}")
+    src = move_source(repo, src_path, args.memory, src_alias, args.dest)
 
     # What the user typed named the thing; this is where it actually lives.
     rel = src.relative_to(repo).as_posix()
