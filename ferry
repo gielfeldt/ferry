@@ -125,14 +125,16 @@ def session_name_map():
     """
     names = {}
     try:
-        for line in HISTORY.open(errors="replace"):
-            try:
-                o = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            m = re.match(r"^/rename\s+(\S+)", (o.get("display") or "").strip())
-            if m and o.get("sessionId"):
-                names[m.group(1)] = o["sessionId"]
+        with HISTORY.open(errors="replace") as fh:
+            for line in fh:
+                try:
+                    o = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                m = re.match(r"^/rename\s+(\S+)",
+                             (o.get("display") or "").strip())
+                if m and o.get("sessionId"):
+                    names[m.group(1)] = o["sessionId"]
     except OSError:
         pass
     return names
@@ -199,8 +201,13 @@ def note_description(md):
             if line.strip() == "---":
                 break
             if line.startswith("description:"):
-                d = line.split(":", 1)[1].strip().strip('"\'')
-                return d.replace('\\"', '"').replace("\\'", "'")
+                d = line.split(":", 1)[1].strip()
+                # Strip one matched pair of quotes, not every quote at the
+                # ends - an escaped quote lives right before the closing one.
+                if len(d) >= 2 and d[0] == d[-1] and d[0] in "\"'":
+                    d = d[1:-1]
+                return (d.replace('\\"', '"').replace("\\'", "'")
+                         .replace("\\\\", "\\"))
         lines = lines[i + 1:]
     for line in lines:
         line = line.strip()
@@ -214,15 +221,16 @@ def note_description(md):
 def session_id_of(jsonl):
     """The session id recorded inside a transcript."""
     try:
-        for line in jsonl.open(errors="replace"):
-            if '"sessionId"' not in line:
-                continue
-            try:
-                sid = json.loads(line).get("sessionId")
-            except json.JSONDecodeError:
-                continue
-            if sid:
-                return sid
+        with jsonl.open(errors="replace") as fh:
+            for line in fh:
+                if '"sessionId"' not in line:
+                    continue
+                try:
+                    sid = json.loads(line).get("sessionId")
+                except json.JSONDecodeError:
+                    continue
+                if sid:
+                    return sid
     except OSError:
         pass
     return None
