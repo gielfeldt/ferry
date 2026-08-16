@@ -231,15 +231,25 @@ def pull(repo):
             f"       ferry update explains how to sort it out")
 
 
-def commit_push(repo, message):
-    git(repo, "add", "-A")
-    if git(repo, "diff", "--cached", "--quiet", check=False).returncode == 0:
+def commit_push(repo, message, paths):
+    """Commit exactly the paths ferry wrote, and push.
+
+    Never `git add -A`. Blanket staging commits whatever else happens to be in
+    the store - editor leftovers, half-finished edits, a key someone dropped
+    there - and the whole point of this repo is that its contents are
+    deliberate. `paths` are repo-relative and are the only things staged.
+    """
+    for p in paths:
+        git(repo, "add", "--", p)
+    if git(repo, "diff", "--cached", "--quiet", "--", *paths,
+           check=False).returncode == 0:
         print("  nothing changed")
         return
-    git(repo, "commit", "-q", "-m", message)
+    git(repo, "commit", "-q", "-m", message, "--", *paths)
     if git(repo, "remote", check=False).stdout.strip():
         if git(repo, "push", "--quiet", "origin", "HEAD", check=False).returncode:
-            die("push rejected - run the command again to pull and retry")
+            die("push rejected - another machine pushed first.\n"
+                "       ferry update <repo>, then save again")
         print("  pushed")
 
 
@@ -318,7 +328,7 @@ def cmd_save(args):
         shutil.copytree(src, dest)
         n = len(list(dest.rglob("*.md")))
         print(f"saved memory -> {alias}:{path}  ({n} file(s))")
-        commit_push(repo, f"memory: {path}")
+        commit_push(repo, f"memory: {path}", [path])
         return
 
     src = find_session(args.session, here)
@@ -333,7 +343,7 @@ def cmd_save(args):
     }, indent=2, sort_keys=True) + "\n")
     print(f"saved {src.stem[:8]} -> {alias}:{path}  "
           f"({dest.stat().st_size/1e6:.1f} MB)")
-    commit_push(repo, f"session: {path}")
+    commit_push(repo, f"session: {path}", [f"{path}.jsonl", f"{path}.json"])
 
 
 def cmd_load(args):
