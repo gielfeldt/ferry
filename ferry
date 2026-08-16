@@ -242,8 +242,28 @@ def cmd_repo_add(args):
     d[alias] = {"url": url, "path": str(path), "added": now()}
     save_repos(d)
     print(f"{alias} -> {path}")
-    if not encrypted(path):
-        print(f"  no git-crypt yet:  cd {path} && git-crypt init")
+
+    # A fresh clone of an encrypted store arrives locked. ferry does not manage
+    # keys - it just hands yours to git-crypt, so you are not left guessing why
+    # every save is refused.
+    if args.key:
+        key = Path(args.key).expanduser().resolve()
+        if not key.is_file():
+            die(f"no key at {key}")
+        if encrypted(path):
+            print("  already unlocked")
+        elif not shutil.which("git-crypt"):
+            die("git-crypt is not installed")
+        else:
+            r = subprocess.run(["git-crypt", "unlock", str(key)], cwd=path,
+                               capture_output=True, text=True)
+            if r.returncode:
+                die(f"git-crypt unlock failed:\n{(r.stderr or r.stdout).strip()}")
+            print(f"  unlocked with {key}")
+    elif not encrypted(path):
+        print(f"  locked or unencrypted. If it has a key:  "
+              f"ferry repo add {alias} --path {path} --key <file>")
+        print(f"  to encrypt it for the first time:  cd {path} && git-crypt init")
 
 
 def cmd_repo_list(args):
@@ -392,6 +412,8 @@ def main():
     q.add_argument("alias")
     q.add_argument("url", nargs="?")
     q.add_argument("--path", help="use a checkout you already have")
+    q.add_argument("--key", metavar="FILE",
+                   help="git-crypt key to unlock it with")
     q.set_defaults(func=cmd_repo_add)
     q = ps.add_parser("list", help="show registered repos")
     q.set_defaults(func=cmd_repo_list)
