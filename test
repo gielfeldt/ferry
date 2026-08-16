@@ -227,6 +227,11 @@ class CommandLine(unittest.TestCase):
         self.run_ferry("load", "work:acme/bug-hunt")
         self.assertEqual(self.calls[0][1].target, "work:acme/bug-hunt")
 
+    def test_bare_list_is_the_same_as_stores(self):
+        self.run_ferry("list")
+        self.assertEqual(self.calls[0][0], "cmd_list")
+        self.assertIsNone(self.calls[0][1].ref)
+
     def test_unknown_command_exits(self):
         with quiet(), self.assertRaises(SystemExit):
             sys.argv = ["ferry", "frobnicate"]

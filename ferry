@@ -495,7 +495,7 @@ def cmd_load(args):
 
 def cmd_list(args):
     if not args.ref:
-        die("which store?  ferry stores")
+        return cmd_stores(args)      # bare `list` is the same question
     alias, _, path = args.ref.partition(":")
     repo = repo_dir(alias)
     # Fetch but never merge. Listing has to see what another machine saved, yet
@@ -633,7 +633,7 @@ USAGE = """\
   ferry save --memory [to] <store>:<dir> [--force]
   ferry load <store>:<path> [--force]
   ferry load --memory <store>:<dir> [--force]
-  ferry list [<store>[:<path>]]
+  ferry list [<store>[:<path>]]           without a store, same as `stores`
   ferry update [<store>]\
 """
 
@@ -709,7 +709,7 @@ def main():
                    help="overwrite even if the local copy is longer")
     p.set_defaults(func=cmd_load)
 
-    p = sub.add_parser("list", help="what a store holds")
+    p = sub.add_parser("list", help="what a store holds, or the stores")
     p.add_argument("ref", nargs="?", metavar="<store>[:<path>]")
     p.set_defaults(func=cmd_list)
 
