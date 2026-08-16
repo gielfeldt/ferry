@@ -229,30 +229,35 @@ Stores written by ferry 1.1 and earlier kept both kinds in one place —
 so that saving memory can never reach a transcript.
 
 Upgrade **every machine first**, because an older ferry will not find anything
-in a migrated store:
+in a migrated store, and a 1.2 one will report a 1.1 store as empty:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/gielfeldt/ferry/main/install.sh | sh
 ferry --version        # 1.2.0 or later, everywhere
 ```
 
-Then, from any one of them, once per store:
+Then move the store across once, by hand — it is a one-off, so ferry has no
+command for it:
 
 ```sh
-ferry migrate work
+cd ~/.local/share/ferry/work
+mkdir -p sessions memories
+
+for d in */; do
+    d="${d%/}"
+    case "$d" in sessions|memories) continue ;; esac
+    [ -d "$d/memory" ] && git mv "$d/memory" "memories/$d"
+    # a folder that held only memory is empty now, and git mv refuses those
+    if [ -n "$(ls -A "$d")" ]; then git mv "$d" "sessions/$d"; else rmdir "$d"; fi
+done
+
+git commit -m "split into sessions/ and memories/"
+git push
 ```
 
-It prints every move before making it, then commits and pushes the lot. Files
-that are neither transcripts nor notes are left where they are. Until you run
-it, ferry refuses to read the store and says so:
-
-```
-ferry: 'work' was filed by ferry 1.1 or older, which kept sessions and
-       memory in one tree (131 transcript(s)).
-       ferry migrate work      to move them, once, in one commit
-```
-
-Nothing in `~/.claude` is touched, and the old paths stay in git history.
+Check it before pushing with `git status` and `ferry list work` — the listing
+should be identical to the one you got before, dates included. Nothing in
+`~/.claude` is touched, and the old paths stay in git history either way.
 
 ## When save refuses
 

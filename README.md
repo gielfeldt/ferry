@@ -68,7 +68,6 @@ ferry move --memory <store>:<dir> <store>:<dir> [--force]
 ferry list [<store>[:<path>]]
 ferry list --memory [<store>[:<dir>]]
 ferry update [<store>]
-ferry migrate <store>
 ```
 
 ```sh

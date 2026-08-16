@@ -147,26 +147,6 @@ def of_store(path):
     return path
 
 
-def old_layout(repo):
-    """Transcripts filed before the split, when both trees shared one path.
-
-    Worth naming rather than ignoring: such a store looks empty to this version
-    otherwise, and 'nothing there' is the wrong answer to 'my sessions are
-    missing'.
-    """
-    if (repo / SESSIONS).is_dir() or (repo / MEMORIES).is_dir():
-        return []
-    return sorted(p for p in repo.rglob("*.jsonl") if ".git" not in p.parts)
-
-
-def check_layout(repo, alias):
-    stale = old_layout(repo)
-    if stale:
-        die(f"'{alias}' was filed by ferry 1.1 or older, which kept sessions "
-            f"and memory in one tree ({len(stale)} transcript(s)).\n"
-            f"       ferry migrate {alias}      to move them, once, in one commit")
-
-
 # ------------------------------------------------------------------ sessions
 
 def session_name(jsonl):
@@ -506,7 +486,6 @@ def cmd_save(args):
     alias, path = split_ref(target, directory=True)
     repo, here = repo_dir(alias), slug_dir()
     check_encryption(repo, alias, args.allow_plaintext)
-    check_layout(repo, alias)
     pull(repo)
 
     if args.memory:
@@ -564,7 +543,6 @@ def cmd_load(args):
     """
     alias, path = split_ref(args.target, directory=args.memory)
     repo, here = repo_dir(alias), slug_dir()
-    check_layout(repo, alias)
     pull(repo)
 
     if args.memory:
@@ -604,62 +582,6 @@ def cmd_load(args):
     print(f"  resume it here with:  claude --resume {name}")
 
 
-def cmd_migrate(args):
-    """Move a pre-1.2 store into the two trees, once, in one commit.
-
-    Before 1.2 both kinds shared a path: acme/bug-hunt.jsonl beside
-    acme/memory/. Everything below acme/memory/ is memory; every transcript is
-    a session. That is enough to sort them without guessing.
-    """
-    alias = args.name
-    repo = repo_dir(alias)
-    if not old_layout(repo):
-        print(f"{alias} is already split into {SESSIONS}/ and {MEMORIES}/")
-        return
-    pull(repo)
-
-    moves = []                                     # (from, to)
-    for p in sorted(repo.iterdir()):
-        if p.name.startswith(".") or not p.is_dir():
-            continue
-        for src in sorted(p.rglob("*")):
-            if not src.is_file():
-                continue
-            rel = src.relative_to(repo).as_posix()
-            parts = rel.split("/")
-            if "memory" in parts:                  # a note, wherever it sat
-                i = parts.index("memory")
-                moves.append((rel, in_store(
-                    "/".join(parts[:i] + parts[i + 1:]), memory=True)))
-            elif rel.endswith(".jsonl"):
-                moves.append((rel, in_store(rel)))
-    loose = sorted(p.name for p in repo.iterdir()
-                   if p.is_file() and not p.name.startswith("."))
-
-    for src, dst in moves:
-        print(f"  {src}  ->  {dst}")
-    if loose:
-        print(f"\n  left where they are: {', '.join(loose)}")
-    if not moves:
-        print("nothing to move")
-        return
-
-    for src, dst in moves:
-        (repo / dst).parent.mkdir(parents=True, exist_ok=True)
-        git(repo, "mv", "--", src, dst)
-    # git tracks files, not directories, so the emptied ones are left behind on
-    # disk. Nothing reads them, but a store you can browse should not be full
-    # of husks of its old shape.
-    for d in sorted(repo.rglob("*"), key=lambda p: -len(p.parts)):
-        if d.is_dir() and d.name not in (SESSIONS, MEMORIES) \
-                and ".git" not in d.parts and not any(d.iterdir()):
-            d.rmdir()
-    print(f"\nmoved {len(moves)} file(s) into {SESSIONS}/ and {MEMORIES}/")
-    commit_push(repo, f"split into {SESSIONS}/ and {MEMORIES}/",
-                sorted({m[1].split("/")[0] for m in moves} |
-                       {m[0].split("/")[0] for m in moves}))
-
-
 def cmd_move(args):
     """Re-file something inside a store, keeping the name it already has.
 
@@ -681,7 +603,6 @@ def cmd_move(args):
             f"one and save it into the other")
 
     repo = repo_dir(src_alias)
-    check_layout(repo, src_alias)
     pull(repo)
 
     if args.memory:
@@ -763,7 +684,6 @@ def cmd_list(args):
 
 def list_one(alias, path, memory):
     repo = repo_dir(alias)
-    check_layout(repo, alias)
     # Fetch but never merge. Listing has to see what another machine saved, yet
     # a read should not be the thing that fails because the clone diverged.
     fetch(repo)
@@ -789,8 +709,12 @@ def list_one(alias, path, memory):
             found = True
             disk = f.relative_to(repo).as_posix()
             rel = of_store(disk)[:-6]
-            when = git(repo, "log", "-1", "--format=%ad", "--date=short", "--",
-                       disk, check=False).stdout.strip()
+            # When the session was last *written*, not last touched: --follow
+            # crosses renames, and skipping R leaves out the move itself, so
+            # re-filing a session does not restamp it with today's date.
+            when = git(repo, "log", "--follow", "-1", "--format=%ad",
+                       "--date=short", "--diff-filter=MA", "--", disk,
+                       check=False).stdout.strip()
             print(f"  {alias}:{rel:<40} {f.stat().st_size/1e6:6.1f} MB  {when}")
 
     if not found:
@@ -812,7 +736,6 @@ COMMANDS = {
     "move":     ["--memory", "--force"],
     "list":     ["--memory"],
     "update":   [],
-    "migrate":  [],
 }
 
 
@@ -889,7 +812,7 @@ def cmd_complete(args):
 
     memory = "--memory" in words
     if not cur.startswith("-"):
-        if cmd in ("update", "migrate"):
+        if cmd == "update":
             out = [n for n in sorted(repos()) if n.startswith(cur)]
         elif cmd == "list":
             out = store_refs(cur, "memory" if memory else "session")
@@ -1015,8 +938,7 @@ USAGE = """\
   ferry move --memory <store>:<dir> <store>:<dir> [--force]
   ferry list [<store>[:<path>]]           without a store, same as `stores`
   ferry list --memory [<store>[:<dir>]]
-  ferry update [<store>]
-  ferry migrate <store>                  split a pre-1.2 store into two trees\
+  ferry update [<store>]\
 """
 
 EXAMPLES = """\
@@ -1114,10 +1036,6 @@ def main():
     p.add_argument("--memory", action="store_true",
                    help="memory rather than sessions")
     p.set_defaults(func=cmd_list)
-
-    p = sub.add_parser("migrate", help="split a pre-1.2 store into two trees")
-    p.add_argument("name", metavar="<store>")
-    p.set_defaults(func=cmd_migrate)
 
     p = sub.add_parser("complete")          # no help: hidden from --help
     p.add_argument("--line", help="the raw command line, split here not by the shell")
