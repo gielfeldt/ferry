@@ -208,6 +208,15 @@ many are hiding.
 
 **A store is a plain git repo.** ferry only fast-forwards; it never merges.
 
+**The list of stores is a file, written carefully.** It is rewritten by
+`add`, `rename` and `remove` — never by anything else — beside itself and
+renamed into place, so an interrupted write leaves the old file rather than
+half of one. Those three take a lock while they read and change it, so two at
+once cannot undo each other; the lock covers the rewrite only, never a clone
+or a push, and a second ferry waits a few seconds and then says so rather than
+hanging. Memory is replaced the same way: copied alongside and swapped, so
+stopping a `load --memory` part-way leaves the notes you had.
+
 **The registry is a list of names, and only that.** `ferry remove` forgets a
 name; it does not delete the checkout, because ferry did not put most of what
 is in there and cannot know whether you want it. It tells you where the

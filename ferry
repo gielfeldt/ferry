@@ -8,6 +8,8 @@ watched: it does exactly what you type, when you type it.
 """
 import argparse
 import base64
+import contextlib
+import fcntl
 import json
 import os
 import re
@@ -15,6 +17,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -75,8 +78,56 @@ def repos():
 
 
 def save_repos(d):
+    """Write the registry so that an interrupted write cannot damage it.
+
+    write_text truncates first, so a crash between the two leaves half a file
+    and every later command failing on it. Writing beside it and renaming into
+    place means the file is either the old one or the new one, never part of
+    both - rename is atomic within a filesystem, which is the same guarantee a
+    database would be giving you here.
+    """
     CONFIG.mkdir(parents=True, exist_ok=True)
-    CONFIG_FILE.write_text(json.dumps(d, indent=2, sort_keys=True) + "\n")
+    tmp = CONFIG_FILE.with_name(CONFIG_FILE.name + f".{os.getpid()}.new")
+    try:
+        tmp.write_text(json.dumps(d, indent=2, sort_keys=True) + "\n")
+        os.replace(tmp, CONFIG_FILE)
+    finally:
+        if tmp.exists():
+            tmp.unlink()
+
+
+@contextlib.contextmanager
+def registry(wait=5.0):
+    """The registry, held for a read-modify-write.
+
+    `add`, `rename` and `remove` all read it, change one entry and write it
+    back; without this, two at once would both read the old copy and the
+    second would undo the first.
+
+    It waits rather than failing outright, because the part it guards is a
+    small file being rewritten - milliseconds - and never the clone or the
+    push, which are the slow things `add` does. flock is released by the
+    kernel when the process ends, so a crash cannot leave it stuck.
+    """
+    CONFIG.mkdir(parents=True, exist_ok=True)
+    lock = CONFIG / "lock"
+    fh = lock.open("w")
+    until = time.monotonic() + wait
+    try:
+        while True:
+            try:
+                fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except OSError:
+                if time.monotonic() >= until:
+                    die(f"another ferry is changing the list of stores "
+                        f"(waited {wait:g}s). Try again in a moment.")
+                time.sleep(0.05)
+        d = repos()
+        yield d
+        save_repos(d)
+    finally:
+        fh.close()
 
 
 def repo_dir(alias):
@@ -457,9 +508,10 @@ def cmd_add(args):
             die(f"clone failed:\n{(r.stderr or r.stdout).strip()}")
     url = args.url or git(path, "remote", "get-url", "origin",
                           check=False).stdout.strip()
-    d = repos()
-    d[alias] = {"url": url, "path": str(path), "added": now()}
-    save_repos(d)
+    # Held only for the rewrite - the clone above may take minutes, and
+    # nothing else should be waiting on it.
+    with registry() as d:
+        d[alias] = {"url": url, "path": str(path), "added": now()}
     print(f"{alias} -> {path}")
 
     # A fresh clone of an encrypted store arrives locked. ferry does not manage
@@ -510,24 +562,24 @@ def cmd_rename(args):
     it was yours before ferry knew about it.
     """
     old, new = args.name, check_alias(args.new)
-    d = repos()
-    if old not in d:
-        die(f"unknown store '{old}' (have: {', '.join(sorted(d)) or 'none yet'})")
-    if new in d:
-        die(f"'{new}' is already a store, at {d[new]['path']}")
+    with registry() as d:
+        if old not in d:
+            die(f"unknown store '{old}' "
+                f"(have: {', '.join(sorted(d)) or 'none yet'})")
+        if new in d:
+            die(f"'{new}' is already a store, at {d[new]['path']}")
 
-    path = Path(d[old]["path"])
-    if path == own_clone(old):
-        moved = own_clone(new)
-        if moved.exists():
-            die(f"{moved} is in the way")
-        path.rename(moved)
-        d[old]["path"] = str(moved)
-        print(f"{old} -> {new}  ({moved})")
-    else:
-        print(f"{old} -> {new}  (checkout stays at {path})")
-    d[new] = d.pop(old)
-    save_repos(d)
+        path = Path(d[old]["path"])
+        if path == own_clone(old):
+            moved = own_clone(new)
+            if moved.exists():
+                die(f"{moved} is in the way")
+            path.rename(moved)
+            d[old]["path"] = str(moved)
+            print(f"{old} -> {new}  ({moved})")
+        else:
+            print(f"{old} -> {new}  (checkout stays at {path})")
+        d[new] = d.pop(old)
 
 
 def cmd_remove(args):
@@ -537,18 +589,17 @@ def cmd_remove(args):
     clone is wanted elsewhere, so it says where the directory is and leaves
     removing it to you.
     """
-    d = repos()
-    if args.name not in d:
-        die(f"unknown store '{args.name}' "
-            f"(have: {', '.join(sorted(d)) or 'none yet'})")
-    path = Path(d[args.name]["path"])
-    trouble = unsaved_work(path)
-    if trouble and not args.force:
-        die(f"'{args.name}' has {trouble}.\n"
-            f"       {path}\n"
-            f"       push it first, or --force to forget it anyway")
-    d.pop(args.name)
-    save_repos(d)
+    with registry() as d:
+        if args.name not in d:
+            die(f"unknown store '{args.name}' "
+                f"(have: {', '.join(sorted(d)) or 'none yet'})")
+        path = Path(d[args.name]["path"])
+        trouble = unsaved_work(path)
+        if trouble and not args.force:
+            die(f"'{args.name}' has {trouble}.\n"
+                f"       {path}\n"
+                f"       push it first, or --force to forget it anyway")
+        d.pop(args.name)
     print(f"forgot {args.name}")
     print(f"  its checkout is still at {path}")
     print(f"  ferry add {args.name} --path {path}   to register it again")
@@ -598,8 +649,7 @@ def cmd_save(args):
         dest = repo / leaf
         if dest.exists() and not dest.is_dir():
             die(f"{dest} exists and is not a directory")
-        shutil.rmtree(dest, ignore_errors=True)
-        shutil.copytree(src, dest)
+        replace_dir(src, dest)
         n = len(list(dest.rglob("*.md")))
         print(f"saved memory -> {alias}:{path}  ({n} file(s))")
         commit_push(repo, f"memory: {path or 'top'}", [leaf])
@@ -658,8 +708,7 @@ def cmd_load(args):
             die(f"{dest} already holds {len(list(dest.glob('*.md')))} note(s) - "
                 f"pass --force to replace them")
         here.mkdir(parents=True, exist_ok=True)
-        shutil.rmtree(dest, ignore_errors=True)
-        shutil.copytree(mem, dest)
+        replace_dir(mem, dest)
         print(f"loaded memory {alias}:{path} -> {dest}  "
               f"({len(list(dest.rglob('*.md')))} file(s))")
         return
@@ -1009,6 +1058,30 @@ def cmd_move(args):
     git(repo, "mv", "--", rel, leaf)
     print(f"moved {src_alias}:{of_store(rel)} -> {src_alias}:{of_store(leaf)}")
     commit_push(repo, f"move: {of_store(rel)} -> {of_store(leaf)}", [rel, leaf])
+
+
+def replace_dir(src, dest):
+    """Put a copy of src at dest, without a long moment where dest is neither.
+
+    rmtree then copytree leaves the destination empty for as long as the copy
+    takes, and half-full if it is interrupted - which for `load --memory` is
+    your own notes. Copying alongside and swapping narrows that to two renames:
+    stop it anywhere earlier and the old notes are still there.
+    """
+    tag = f".ferry-{os.getpid()}"
+    new, old = dest.with_name(dest.name + tag + ".new"), \
+        dest.with_name(dest.name + tag + ".old")
+    shutil.rmtree(new, ignore_errors=True)
+    shutil.rmtree(old, ignore_errors=True)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(src, new)
+    try:
+        if dest.exists():
+            dest.rename(old)
+        new.rename(dest)
+    finally:
+        shutil.rmtree(old, ignore_errors=True)
+        shutil.rmtree(new, ignore_errors=True)
 
 
 def print_notes(mem):

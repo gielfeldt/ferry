@@ -344,6 +344,86 @@ class SessionDirs(unittest.TestCase):
         self.assertEqual(f.tilde(str(Path.home() / "x")), "~/x")
 
 
+class RegistryWrites(unittest.TestCase):
+    """The list of stores is a file three commands read, change and write
+    back."""
+
+    def setUp(self):
+        self.config = Path(tempfile.mkdtemp())
+        self.saved = (f.CONFIG, f.CONFIG_FILE)
+        f.CONFIG, f.CONFIG_FILE = self.config, self.config / "repos.json"
+
+    def tearDown(self):
+        f.CONFIG, f.CONFIG_FILE = self.saved
+
+    def test_a_write_leaves_no_half_file(self):
+        """It is written beside and renamed in, so the file is the old one or
+        the new one - never part of both."""
+        f.save_repos({"a": {"path": "/x"}})
+        self.assertEqual(f.repos()["a"]["path"], "/x")
+        self.assertEqual([p.name for p in self.config.iterdir()
+                          if p.name.startswith("repos.json.")], [])
+
+    def test_the_lock_writes_what_the_block_changed(self):
+        with f.registry() as d:
+            d["b"] = {"path": "/y"}
+        self.assertIn("b", f.repos())
+
+    def test_dying_inside_the_block_writes_nothing(self):
+        """`remove` refuses from inside the lock, and a refusal must not be a
+        change."""
+        f.save_repos({"keep": {"path": "/x"}})
+        with quiet(), self.assertRaises(SystemExit):
+            with f.registry() as d:
+                d["gone"] = {"path": "/y"}
+                f.die("changed my mind")
+        self.assertEqual(sorted(f.repos()), ["keep"])
+
+    def test_a_second_holder_waits_and_then_says_so(self):
+        """Rather than hanging, or failing the instant it is contended."""
+        import threading
+        started, release = threading.Event(), threading.Event()
+
+        def hold():
+            with f.registry():
+                started.set()
+                release.wait(5)
+
+        t = threading.Thread(target=hold, daemon=True)
+        t.start()
+        started.wait(5)
+        try:
+            with quiet() as (_, err), self.assertRaises(SystemExit):
+                with f.registry(wait=0.2):
+                    pass
+            self.assertIn("another ferry", err.getvalue())
+        finally:
+            release.set()
+            t.join(5)
+
+
+class ReplaceDir(unittest.TestCase):
+    """Memory is written by replacing a whole directory."""
+
+    def test_the_destination_ends_up_holding_the_source(self):
+        root = Path(tempfile.mkdtemp())
+        src, dest = root / "src", root / "dest"
+        src.mkdir(); dest.mkdir()
+        (src / "new.md").write_text("new")
+        (dest / "old.md").write_text("old")
+        f.replace_dir(src, dest)
+        self.assertEqual([p.name for p in dest.iterdir()], ["new.md"])
+
+    def test_it_cleans_up_after_itself(self):
+        """The copy and the displaced original are both temporary."""
+        root = Path(tempfile.mkdtemp())
+        src, dest = root / "src", root / "dest"
+        src.mkdir(); (src / "a.md").write_text("a")
+        f.replace_dir(src, dest)
+        self.assertEqual(sorted(p.name for p in root.iterdir()),
+                         ["dest", "src"])
+
+
 class StoreRegistry(unittest.TestCase):
     """Adding, renaming and forgetting a store. The registry is a file of
     names; what they point at is not ferry's to delete."""
