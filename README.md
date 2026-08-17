@@ -105,8 +105,10 @@ ferry move --memory work:acme work:acme-v2    # -> acme-v2/memory
 ## Concepts
 
 **Everything is relative to the directory you are standing in.** Claude Code
-files transcripts by working directory, so `sessions`, `save` and `load` all act
-on the current one. `cd` to where you were working.
+files transcripts by working directory, so `sessions`, `save` and `load` act on
+the current one. `cd` to where you were working. The two exceptions say so out
+loud: `sessions --global` looks everywhere, and `export` takes a ref that can
+name another directory.
 
 **A session is filed under its own name.** `save` takes a *directory* and names
 the file after the session, so one conversation has one name on every machine.
@@ -151,18 +153,18 @@ across the machine would eventually pick the wrong one without saying so.
 checked to resolve, and `ferry export <TAB>` offers those directories
 alongside the local names and the stores.
 
+What it prints is the conversation: what you asked, what Claude answered, and
+one line per tool call. That is about 1% of a transcript — a 17.9 MB session
+comes out as 95 KB — because tool results are the bulk of any real session.
+`--tools` puts them back, in full. Images cannot go in the text at all, so
+they are noted where they appeared, and written out beside it with `--media`.
+
 **A session with no name is not listed by default.** It cannot be named in a
 ref — `save` refuses it and `<dir>:<name>` has nothing to match — so listing it
 offers you something you cannot then act on, and completion would walk you into
 directories with nothing behind them. `--all` brings them back, addressed by
 their full id, which is the only handle they have. `ferry sessions` says how
 many are hiding.
-
-What it prints is the conversation: what you asked, what Claude answered, and
-one line per tool call. That is about 1% of a transcript — a 17.9 MB session
-comes out as 95 KB — because tool results are the bulk of any real session.
-`--tools` puts them back, in full. Images cannot go in the text at all, so
-they are noted where they appeared, and written out beside it with `--media`.
 
 **A store is a plain git repo.** ferry only fast-forwards; it never merges.
 
@@ -208,9 +210,9 @@ The cost is that `ferry list` no longer matches `git ls-files`; prefix a path
 with its tree when working in the checkout by hand. `ferry move` re-files
 something and pushes the commit; deleting is still `git rm` there.
 
-Only `save` writes to the remote. `load`, `list` and `update` never push, and
-`list` fetches without merging so it can always show what is really there,
-even when your clone has diverged.
+`save` and `move` write to the remote; nothing else does. `load`, `list`,
+`export` and `update` never push, and `list` fetches without merging so it can
+always show what is really there, even when your clone has diverged.
 
 ## Limitations
 
@@ -248,8 +250,11 @@ fpath=(~/.local/share/zsh/site-functions $fpath)
 Completes commands, each command's flags, store references and session names.
 `ferry load work:<TAB>` walks what the store holds, one level at a time like
 filename completion; `ferry save <TAB>` offers the named sessions in the
-directory you are standing in; and `--memory` changes what is offered, because
-it changes which of the store's two trees is being asked about.
+directory you are standing in; `ferry export <TAB>` adds the directories that
+hold sessions, ready for a name after the colon; and `--memory` changes what is
+offered, because it changes which of the store's two trees is being asked
+about. `--all` widens the last two to sessions that have no name, offered by
+id.
 
 Where a path belongs — the value of `--key` or `--path` — the shell completes
 filenames. Where nothing belongs at all, such as after `ferry stores`, nothing
@@ -267,15 +272,19 @@ encrypted, so there is nothing to read without decrypting the lot.
 ./test
 ```
 
-Self-contained: no git, no network, no `~/.claude`. Runs on CI unchanged.
+Needs python3, and `bash` for the handful that run the completion script for
+real. Nothing else: no network, no git repo, no store, and never your actual
+`~/.claude` — anything that would need one builds a temporary copy, and the
+few that want a registered store skip when there is none. Runs on CI
+unchanged.
 
 ## Releasing
 
 Push a tag. That is the whole of it:
 
 ```sh
-git tag -a v1.2.8 -m "what changed"
-git push origin v1.2.8
+git tag -a v1.2.14 -m "what changed"
+git push origin v1.2.14
 ```
 
 A workflow runs the tests, writes the tag's version into `ferry`, and

@@ -312,8 +312,10 @@ should be identical to the one you got before, dates included. Nothing in
 ## When save refuses
 
 **"has no name, and the name is what it would be filed under"** — the session
-was never named. `/rename` it, then save. `ferry sessions` shows Claude's own
-title with a `*` for exactly these — a title is not a name.
+was never named. `/rename` it, then save. `ferry sessions` does not list it, so
+that the list only holds things you can act on; it says how many are hiding, and
+`ferry sessions --all` shows them with Claude's own title marked `*` — a title
+is not a name.
 
 **"already holds a different session"** — that name is taken in the store by
 another conversation. Rename one of them, or `--force` if you really mean to
