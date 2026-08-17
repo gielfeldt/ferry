@@ -380,7 +380,7 @@ class BashCompletion(unittest.TestCase):
 
     def test_a_folder_does_not_get_one(self):
         """The next TAB has to be able to carry on into it."""
-        _, got = self.complete("ferry load store:bee", ["store:acme/"])
+        _, got = self.complete("ferry load store:acm", ["store:acme/"])
         self.assertEqual(got, ["acme/"])
 
     def test_a_store_name_does_not_get_one_either(self):
@@ -443,7 +443,7 @@ class StoreRefs(unittest.TestCase):
                          ["s:acme/", "s:globex/", "s:personal/"])
 
     def test_a_prefix_narrows_it(self):
-        self.assertEqual(f.store_refs("s:bee", "session"), ["s:acme/"])
+        self.assertEqual(f.store_refs("s:acm", "session"), ["s:acme/"])
 
     def test_an_unknown_store_offers_nothing(self):
         self.assertEqual(f.store_refs("nope:", "session"), [])
