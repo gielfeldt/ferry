@@ -1,0 +1,55 @@
+name: release
+
+# Push a tag, get a release. Nothing else to remember, and nothing that can be
+# done differently by hand from one release to the next - the last two got
+# their completion assets uploaded under the wrong names, which the installer
+# only stopped hiding once its fallback was removed.
+on:
+  push:
+    tags: ["v[0-9]+.[0-9]+.[0-9]+"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0          # the tag message is the release body
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+
+      - name: The tag and the version have to agree
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          said="$(python3 ferry --version | awk '{print $2}')"
+          if [ "$tag" != "$said" ]; then
+            echo "tag v$tag but ferry says $said - bump __version__ first" >&2
+            exit 1
+          fi
+          echo "ferry $said, tagged v$tag"
+
+      - run: ./test
+
+      - name: Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Assets are named by their paths in the repo, so one cannot end up
+          # called something else because of how the command was typed that
+          # day - which is how v1.2.5 and v1.2.6 got f.bash and f.zsh.
+          #
+          # Notes come from the tag: its own message when annotated, and the
+          # tagged commit's message when lightweight. Either is something
+          # already written down rather than composed at release time.
+          notes="$(git tag -l --format='%(contents)' "$GITHUB_REF_NAME")"
+          [ -n "$notes" ] || notes="See the commit log for what changed."
+          printf '%s\n' "$notes" > notes.md
+          gh release create "$GITHUB_REF_NAME" \
+            ferry completions/ferry.bash completions/ferry.zsh \
+            --title "ferry ${GITHUB_REF_NAME#v}" \
+            --notes-file notes.md

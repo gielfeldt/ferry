@@ -217,6 +217,24 @@ encrypted, so there is nothing to read without decrypting the lot.
 
 Self-contained: no git, no network, no `~/.claude`. Runs on CI unchanged.
 
+## Releasing
+
+Bump `__version__`, commit, then push a tag:
+
+```sh
+git tag v1.2.7
+git push origin v1.2.7
+```
+
+A workflow does the rest: it refuses the tag if `__version__` disagrees with
+it, runs the tests, and publishes a release carrying `ferry`, `ferry.bash` and
+`ferry.zsh`. The notes come from the tag's own message if it is annotated, and
+from the tagged commit otherwise.
+
+Nothing is uploaded by hand, which is the point — the assets are named after
+their paths in the repo, so they cannot pick up a different name from however
+the command was typed that day.
+
 ## License
 
 [MIT](LICENSE)
