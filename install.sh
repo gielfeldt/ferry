@@ -32,8 +32,10 @@ _get() {                          # _get <dest> <url>
 resolve_ref() {
     [ -n "$REF" ] && { echo "$REF"; return 0; }
     _t="$(mktemp)"
-    # The API knows about a new release immediately; the /releases/latest
-    # redirect can lag behind it by a minute or two.
+    # Both the API and the /releases/latest redirect settle after a release
+    # rather than at it, but the API settles in seconds where the redirect can
+    # take a minute or two - so ask the API. Either way, what matters here is
+    # that one answer is used for every file.
     if _get "$_t" "https://api.github.com/repos/$REPO/releases/latest"; then
         _tag="$(sed -n 's/.*"tag_name" *: *"\([^"]*\)".*/\1/p' "$_t" | head -1)"
         [ -n "$_tag" ] && { rm -f "$_t"; echo "$_tag"; return 0; }
