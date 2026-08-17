@@ -1060,14 +1060,23 @@ class Completion(unittest.TestCase):
         store is offered a level at a time, as everywhere else."""
         got = self.complete_line("ferry export -m ")
         self.assertIn("work:", got)                      # the store
-        self.assertIn(f.tilde(str(Path.cwd())), got)     # and this directory
+        self.assertIn(f.tilde(str(Path.cwd())) + ":", got)   # and this directory
         self.assertEqual(self.complete_line("ferry export -m work:"),
-                         ["work:acme"])                  # then its memory
+                         ["work:acme/"])                 # then its memory
 
     def test_a_memory_ref_can_name_one_note(self):
         """The same shape a session ref has, with a note where the name goes."""
         got = self.complete_line("ferry export -m work:acme/")
         self.assertEqual(got, ["work:acme/note"])       # without the .md
+
+    def test_a_memory_folder_carries_on_rather_than_ending(self):
+        """It is both an answer and a step: a folder means all of its notes,
+        and one more character reaches any one of them. So it must not get a
+        space, which would strand you at the folder."""
+        self.assertEqual(self.complete_line("ferry export -m work:"),
+                         ["work:acme/"])
+        here = f.tilde(str(Path.cwd()))
+        self.assertIn(here + ":", self.complete_line("ferry export -m "))
 
     def test_a_local_memory_ref_names_a_note_after_the_colon(self):
         here = f.tilde(str(Path.cwd()))

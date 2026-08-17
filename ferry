@@ -1230,7 +1230,9 @@ def cmd_complete(args):
                         out = [f"{head}:{parent}/{n}" for n in notes_in(base)
                                if n.startswith(leaf)]
                     else:
-                        out = store_refs(cur, "memory")
+                        # A folder carries on with '/', so no space after it.
+                        out = [c if c.endswith(":") else c + "/"
+                               for c in store_refs(cur, "memory")]
                         folder = repo / in_store(path, memory=True)
                         if folder.is_dir():
                             out += [f"{head}:{path}/{n}"
@@ -1242,8 +1244,12 @@ def cmd_complete(args):
                     out = [f"{head}:{n}" for n in notes_in(mem)
                            if n.startswith(tail)]
                 else:
-                    out = sorted(tilde(d) for d in memory_dirs()) \
-                        + store_refs(cur, "memory")
+                    # A folder is offered with what carries on from it - ':'
+                    # here, '/' in a store - so the next TAB reaches its notes.
+                    # Both still mean the whole folder if you stop there.
+                    out = sorted(tilde(d) + ":" for d in memory_dirs()) \
+                        + [c if c.endswith(":") else c + "/"
+                           for c in store_refs(cur, "memory")]
                 out = [c for c in out if c.startswith(cur)]
                 if not out and (cur.startswith(("~", "/", ".")) or "/" in cur):
                     sys.exit(FILES)
