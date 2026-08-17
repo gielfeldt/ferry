@@ -934,7 +934,7 @@ FILE_FLAGS = {"--key", "--path", "--media"}
 NAME_FLAGS = {"--name"}
 
 # Commands that take nothing at all after them.
-NO_ARGS = {"stores", "sessions", "memory"}
+NO_ARGS = {"stores", "memory"}
 
 # `ferry complete` answers in three ways, because an empty list cannot say
 # which kind of nothing it means:
@@ -1066,7 +1066,15 @@ def cmd_complete(args):
 
     memory = "--memory" in words
     if not cur.startswith("-"):
-        if cmd == "update":
+        if cmd == "sessions":
+            # A directory to look in. The ones that hold sessions come first;
+            # anything else is an ordinary path, and the shell can finish it.
+            if len(prev) == 2:
+                out = [d[:-1] for d in dir_refs("--all" in words or "-a" in words)
+                       if d[:-1].startswith(cur)]
+                if not out:
+                    sys.exit(FILES)
+        elif cmd == "update":
             out = [n for n in sorted(repos()) if n.startswith(cur)]
         elif cmd == "list":
             out = store_refs(cur, "memory" if memory else "session")
@@ -1254,10 +1262,19 @@ def cmd_sessions(args):
     then do anything with. --all brings them back, addressed by id, which is
     the only handle they have.
     """
+    if args.where and args.global_:
+        die("a directory and --global ask different questions - "
+            "one place, or all of them")
     if args.global_:
         return sessions_everywhere(args.all)
 
-    here = slug_dir()
+    # A directory only says where to look. The flags keep meaning what they
+    # mean; an argument that quietly turned one on would be a rule you had to
+    # know rather than one you could read.
+    where = Path(os.path.expanduser(args.where)) if args.where else Path.cwd()
+    if args.where and not where.is_dir():
+        die(f"no such directory: {args.where}")
+    here = slug_dir(where)
     rows, unnamed = [], 0
     for f in sorted(here.glob("*.jsonl")) if here.is_dir() else []:
         name = session_name(f)
@@ -1270,17 +1287,20 @@ def cmd_sessions(args):
         rows.append((f.stat().st_mtime, f.stem, f.stat().st_size, name))
 
     if not rows:
-        print(f"no {'' if args.all else 'named '}sessions for {Path.cwd()}")
+        print(f"no {'' if args.all else 'named '}sessions for {where}")
     for mtime, sid, size, name in sorted(rows, reverse=True):
         when = datetime.fromtimestamp(mtime).strftime("%Y-%m-%d")
         print(f"  {sid}  {when}  {size/1e6:6.1f} MB  {name}")
 
     n = len(list((here / "memory").glob("*.md"))) if (here / "memory").is_dir() else 0
     if n:
-        print(f"  {'memory':<36}  {'':10}  {n:6} md   "
-              f"(ferry save --memory to <store>:<dir>)")
+        # The hint only applies where you are standing: save reads the current
+        # directory's memory, whatever this listing is pointed at.
+        hint = "" if args.where else "(ferry save --memory to <store>:<dir>)"
+        print(f"  {'memory':<36}  {'':10}  {n:6} md   {hint}".rstrip())
     if unnamed and not args.all:
-        print(f"\n  {unnamed} unnamed - ferry sessions --all")
+        print(f"\n  {unnamed} unnamed - ferry sessions "
+              f"{args.where + ' ' if args.where else ''}--all")
     elif any(r[3].startswith("* ") for r in rows):
         print("\n  * a title or opening line, not a name - "
               "/rename it before saving")
@@ -1329,7 +1349,7 @@ def tilde(path):
 USAGE = """\
   ferry add <name> <git-url> [--key <file>] [--path <dir>]
   ferry stores
-  ferry sessions [--global] [--all]
+  ferry sessions [<dir>] [--global] [--all]
   ferry memory
   ferry save <session> [to] <store>:<dir> [--force]
   ferry save --memory [to] <store>:<dir> [--force]
@@ -1355,6 +1375,7 @@ examples:
     ferry sessions
     ferry sessions --global                       everywhere, and where each is
     ferry sessions --all                          unnamed ones too, by id
+    ferry sessions ~/develop/acme                 another directory
     ferry memory
 
   send it
@@ -1408,6 +1429,8 @@ def main():
     p.set_defaults(func=cmd_stores)
 
     p = sub.add_parser("sessions", help="sessions in this directory")
+    p.add_argument("where", nargs="?", metavar="<dir>",
+                   help="another directory, instead of this one")
     p.add_argument("-g", "--global", dest="global_", action="store_true",
                    help="every named session on this machine, and where")
     p.add_argument("-a", "--all", action="store_true",

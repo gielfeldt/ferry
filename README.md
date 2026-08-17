@@ -73,7 +73,7 @@ accident.
 ```
 ferry add <name> <git-url> [--key <file>] [--path <dir>]
 ferry stores
-ferry sessions [--global] [--all]
+ferry sessions [<dir>] [--global] [--all]
 ferry memory
 ferry save <session> [to] <store>:<dir> [--force]
 ferry save --memory [to] <store>:<dir> [--force]
@@ -96,6 +96,7 @@ ferry stores
 ferry sessions                                # sessions in this directory
 ferry sessions --global                       # every named session, and where
 ferry sessions --all                          # unnamed ones too, listed by id
+ferry sessions ~/develop/acme                 # another directory, same rules
 ferry memory                                  # notes in this directory
 
 ferry save bug-hunt to work:acme              # -> acme/bug-hunt.jsonl
@@ -122,9 +123,11 @@ ferry move --memory work:acme work:acme-v2    # -> acme-v2/memory
 
 **Everything is relative to the directory you are standing in.** Claude Code
 files transcripts by working directory, so `sessions`, `save` and `load` act on
-the current one. `cd` to where you were working. The two exceptions say so out
-loud: `sessions --global` looks everywhere, and `export` takes a ref that can
-name another directory.
+the current one. `cd` to where you were working. The exceptions say so out loud: `sessions` takes a directory to look in
+instead, `sessions --global` looks everywhere, and `export` takes a ref that
+can name another directory. A directory only says *where* — the flags go on
+meaning what they mean, so `ferry sessions ~/develop/acme` lists the named
+ones there and `--all` still widens it.
 
 **A session is filed under its own name.** `save` takes a *directory* and names
 the file after the session, so one conversation has one name on every machine.
