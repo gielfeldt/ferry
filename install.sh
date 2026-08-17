@@ -15,35 +15,32 @@ command -v python3 >/dev/null 2>&1 || { echo "ferry needs python3" >&2; exit 1; 
 tmp="$(mktemp)"
 trap 'rm -f "$tmp"' EXIT
 
-fetch() {
-    if command -v curl >/dev/null 2>&1; then curl -fsSL "$1" -o "$tmp" 2>/dev/null
-    elif command -v wget >/dev/null 2>&1; then wget -qO "$tmp" "$1" 2>/dev/null
+_get() {                          # _get <dest> <url>
+    if command -v curl >/dev/null 2>&1; then curl -fsSL "$2" -o "$1" 2>/dev/null
+    elif command -v wget >/dev/null 2>&1; then wget -qO "$1" "$2" 2>/dev/null
     else echo "ferry needs curl or wget" >&2; exit 1
     fi
 }
 
-# Same, but to a destination of your choosing, for the completion files.
-fetch_to() {
-    dest="$1"; path="$2"
-    for url in "https://raw.githubusercontent.com/$REPO/${REF:-main}/$path"; do
-        if command -v curl >/dev/null 2>&1; then
-            curl -fsSL "$url" -o "$dest" 2>/dev/null && return 0
-        elif command -v wget >/dev/null 2>&1; then
-            wget -qO "$dest" "$url" 2>/dev/null && return 0
-        fi
-    done
-    return 1
+# One rule for every file this installs: the release if there is one, the tree
+# otherwise. The binary and its completions have to resolve the same way - a
+# release is a version of ferry, not just of the script, and taking one from a
+# tag and the other from main installs two halves that were never tested
+# together.
+download() {                      # download <dest> <asset> <path-in-tree>
+    if [ -n "$REF" ]; then
+        _get "$1" "https://github.com/$REPO/releases/download/$REF/$2" ||
+        _get "$1" "https://raw.githubusercontent.com/$REPO/$REF/$3"
+    else
+        _get "$1" "https://github.com/$REPO/releases/latest/download/$2" ||
+        _get "$1" "https://raw.githubusercontent.com/$REPO/main/$3"
+    fi
 }
 
-if [ -n "$REF" ]; then
-    fetch "https://github.com/$REPO/releases/download/$REF/ferry" ||
-    fetch "https://raw.githubusercontent.com/$REPO/$REF/ferry" ||
-    { echo "ferry: nothing at $REF in $REPO" >&2; exit 1; }
-else
-    fetch "https://github.com/$REPO/releases/latest/download/ferry" ||
-    fetch "https://raw.githubusercontent.com/$REPO/main/ferry" ||
-    { echo "ferry: could not download from $REPO" >&2; exit 1; }
-fi
+download "$tmp" ferry ferry || {
+    if [ -n "$REF" ]; then echo "ferry: nothing at $REF in $REPO" >&2
+    else echo "ferry: could not download from $REPO" >&2; fi
+    exit 1; }
 
 # Never install something that will not run.
 python3 "$tmp" --version >/dev/null 2>&1 || {
@@ -63,7 +60,7 @@ BASHDIR="${XDG_DATA_HOME:-$HOME/.local/share}/bash-completion/completions"
 ZSHDIR="${XDG_DATA_HOME:-$HOME/.local/share}/zsh/site-functions"
 comp_tmp="$(mktemp)"
 
-if fetch_to "$comp_tmp" "completions/ferry.bash"; then
+if download "$comp_tmp" ferry.bash "completions/ferry.bash"; then
     mkdir -p "$BASHDIR" && mv "$comp_tmp" "$BASHDIR/ferry" \
         && echo "  bash completion -> $BASHDIR/ferry"
     # That directory is only searched by bash-completion 2.x, which needs bash
@@ -79,7 +76,7 @@ if fetch_to "$comp_tmp" "completions/ferry.bash"; then
     fi
 fi
 comp_tmp="$(mktemp)"
-if fetch_to "$comp_tmp" "completions/ferry.zsh"; then
+if download "$comp_tmp" ferry.zsh "completions/ferry.zsh"; then
     mkdir -p "$ZSHDIR" && mv "$comp_tmp" "$ZSHDIR/_ferry" \
         && echo "  zsh completion  -> $ZSHDIR/_ferry"
     case ":${fpath:-}:" in
