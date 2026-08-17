@@ -59,7 +59,8 @@ download "$tmp" ferry || {
 
 # Never install something that will not run.
 python3 "$tmp" --version >/dev/null 2>&1 || {
-    echo "ferry: the downloaded file does not run - not installing it" >&2
+    echo "ferry: the downloaded file does not run under this python3" >&2
+    echo "       ($(python3 -V 2>&1); ferry needs 3.9 or newer)" >&2
     exit 1; }
 
 mkdir -p "$PREFIX"

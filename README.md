@@ -22,8 +22,24 @@ claude --resume bug-hunt
 curl -fsSL https://raw.githubusercontent.com/gielfeldt/ferry/main/install.sh | sh
 ```
 
-Needs python3 and git. Nothing else — no packages, no runtime, no daemon.
 Or just drop the single `ferry` file anywhere on your `PATH`.
+
+## Requirements
+
+| | |
+|---|---|
+| **python3**, 3.9 or newer | ferry is one file and imports only the standard library |
+| **git** | a store is a git repo; ferry runs `git` for every store operation |
+| **git-crypt** | what keeps a store readable only by you — needed on every machine that uses one |
+| **curl** or **wget** | only to run `install.sh` — anything remote afterwards is git's doing |
+
+No packages to install, no runtime, no daemon, nothing running in the
+background.
+
+git-crypt is not optional in practice. Without it `save` refuses rather than
+committing your conversations in the clear, and a store whose clone is locked
+will fail to load from, because what is on disk is ciphertext. `ferry add
+<name> --key <file>` is what unlocks a clone.
 
 ## Quick start
 
