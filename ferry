@@ -1292,7 +1292,17 @@ def main():
             die(f"expected one <store>:<path>, got: {' '.join(args.target)}")
         args.target = words[0]
 
-    args.func(args)
+    try:
+        args.func(args)
+    except BrokenPipeError:
+        # `ferry export … | head`, or a pager quit early. Nothing went wrong,
+        # and the traceback Python would print at shutdown says otherwise -
+        # so point the rest of stdout at nowhere and leave quietly.
+        try:
+            os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
+        except OSError:
+            pass
+        sys.exit(0)
 
 
 if __name__ == "__main__":

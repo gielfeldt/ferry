@@ -15,6 +15,7 @@ script that CI can skip.
 import contextlib
 import importlib.util
 import io
+import re
 import os
 import shlex
 import shutil
@@ -234,6 +235,42 @@ class Export(unittest.TestCase):
         out = f.fenced("here is ``` a fence")
         self.assertIn("````", out)
         self.assertTrue(out.strip().startswith("````"))
+
+
+class ClosedPipe(unittest.TestCase):
+    """`ferry export … | head` closes stdout early. Python's own traceback for
+    that says something went wrong, when nothing did - and piping into a pager
+    is what export is for.
+
+    This runs the real command through a real pipeline. An earlier version
+    passed ferry a file path, which it does not take, so ferry exited before
+    writing anything and the test passed either way.
+    """
+
+    def test_a_closed_pipe_is_not_an_error(self):
+        import json as _json
+        home = Path(tempfile.mkdtemp())
+        work = Path(tempfile.mkdtemp())
+        slug = re.sub(r"[^a-zA-Z0-9]", "-", os.path.realpath(work))
+        d = home / ".claude" / "projects" / slug
+        d.mkdir(parents=True)
+        # Bigger than a pipe buffer, or the writes sit in the kernel and the
+        # failure never happens.
+        (d / "abc.jsonl").write_text("".join(_json.dumps(r) + "\n" for r in (
+            {"type": "custom-title", "customTitle": "big", "sessionId": "abc"},
+            *[{"type": "assistant", "timestamp": "2026-01-01T00:00:00Z",
+               "message": {"role": "assistant", "content": [
+                   {"type": "text", "text": f"line {i} " + "x" * 200}]}}
+              for i in range(4000)])))
+
+        r = subprocess.run(
+            ["sh", "-c", f"{shlex.quote(sys.executable)} {shlex.quote(str(FERRY))}"
+                         f" export big | head -2"],
+            cwd=work, env=dict(os.environ, HOME=str(home)),
+            capture_output=True, text=True)
+        self.assertIn("# big", r.stdout)          # it really did run
+        self.assertNotIn("Traceback", r.stderr)
+        self.assertNotIn("BrokenPipeError", r.stderr)
 
 
 class Layout(unittest.TestCase):
