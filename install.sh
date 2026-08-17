@@ -22,25 +22,45 @@ _get() {                          # _get <dest> <url>
     fi
 }
 
-# One rule for every file this installs: the release if there is one, the tree
-# otherwise. The binary and its completions have to resolve the same way - a
-# release is a version of ferry, not just of the script, and taking one from a
-# tag and the other from main installs two halves that were never tested
-# together.
+# Which version to install, decided once, before anything is fetched.
+#
+# Resolving it per file is the thing to avoid: three separate lookups of
+# "latest" can straddle a release and give you one version's binary with
+# another's completions, and a fallback to main on any single failure quietly
+# does the same. So the ref is settled here, and every file then comes from
+# it - a release is a version of ferry, not of one file at a time.
+resolve_ref() {
+    [ -n "$REF" ] && { echo "$REF"; return 0; }
+    _t="$(mktemp)"
+    # The API knows about a new release immediately; the /releases/latest
+    # redirect can lag behind it by a minute or two.
+    if _get "$_t" "https://api.github.com/repos/$REPO/releases/latest"; then
+        _tag="$(sed -n 's/.*"tag_name" *: *"\([^"]*\)".*/\1/p' "$_t" | head -1)"
+        [ -n "$_tag" ] && { rm -f "$_t"; echo "$_tag"; return 0; }
+    fi
+    rm -f "$_t"
+    return 0                      # no release at all: fall back to main
+}
+
+REF="$(resolve_ref)"
+FROM="${REF:-main}"
+
+# Within one ref, the release asset and the tree at that same tag are the same
+# content, so falling back between them cannot mix versions. Releases before
+# 1.2.2 carry no completion assets, which is exactly what that fallback is for.
 download() {                      # download <dest> <asset> <path-in-tree>
     if [ -n "$REF" ]; then
         _get "$1" "https://github.com/$REPO/releases/download/$REF/$2" ||
         _get "$1" "https://raw.githubusercontent.com/$REPO/$REF/$3"
     else
-        _get "$1" "https://github.com/$REPO/releases/latest/download/$2" ||
         _get "$1" "https://raw.githubusercontent.com/$REPO/main/$3"
     fi
 }
 
+echo "installing ferry from $FROM"
+
 download "$tmp" ferry ferry || {
-    if [ -n "$REF" ]; then echo "ferry: nothing at $REF in $REPO" >&2
-    else echo "ferry: could not download from $REPO" >&2; fi
-    exit 1; }
+    echo "ferry: nothing to download at $FROM in $REPO" >&2; exit 1; }
 
 # Never install something that will not run.
 python3 "$tmp" --version >/dev/null 2>&1 || {
