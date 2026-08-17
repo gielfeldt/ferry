@@ -758,6 +758,10 @@ def list_one(alias, path, memory):
               f"ferry update {alias}")
 
 
+# Options whose value ferry cannot guess: a path on this machine, or a name
+# you are about to invent.
+VALUE_FLAGS = {"--key", "--path", "--name"}
+
 COMMANDS = {
     "add":      ["--key", "--path"],
     "stores":   [],
@@ -837,8 +841,15 @@ def cmd_complete(args):
     cur = words[-1] if words else ""
     prev = [w for w in words[:-1] if not w.startswith("-")]
 
+    # A flag that takes a value: whatever comes next is a file or a name of
+    # your choosing, and ferry has nothing useful to say about it. Saying
+    # nothing lets the shell fall back to filename completion.
+    if len(words) >= 2 and words[-2] in VALUE_FLAGS:
+        return
+
     if len(prev) <= 1:                      # still choosing the command
-        print("\n".join(c for c in sorted(COMMANDS) if c.startswith(cur)))
+        out = ("--help", "--version") if cur.startswith("-") else sorted(COMMANDS)
+        print("\n".join(c for c in out if c.startswith(cur)))
         return
 
     cmd = prev[1]

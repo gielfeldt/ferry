@@ -24,5 +24,7 @@ _ferry() {
 # rejects the whole command rather than the one option - macOS still ships 3.2,
 # where that would leave ferry with no completion at all. Sorted is a fine
 # second best; the candidates come back sorted anyway.
-complete -o nosort -o nospace -F _ferry ferry 2>/dev/null ||
-    complete -o nospace -F _ferry ferry
+# -o default: where ferry offers nothing - the value of --key or --path, say -
+# fall back to filenames, which is what those positions actually want.
+complete -o nosort -o nospace -o default -F _ferry ferry 2>/dev/null ||
+    complete -o nospace -o default -F _ferry ferry

@@ -204,6 +204,10 @@ filename completion; `ferry save <TAB>` offers the named sessions in the
 directory you are standing in; and `--memory` changes what is offered, because
 it changes which of the store's two trees is being asked about.
 
+Where ferry has nothing useful to say — the value of `--key` or `--path`, or a
+`--name` you are inventing — it says nothing, and the shell offers filenames
+instead.
+
 Naming the local sessions means reading each transcript, which sounds slow and
 is not - about 0.2s for 60 MB, because the name is on a line that is cheap to
 recognise. Names inside the *store* are still not offered: those files are
