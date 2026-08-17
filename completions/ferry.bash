@@ -20,6 +20,7 @@ _ferry() {
             [ -d "$real" ] && i="$i/"
             COMPREPLY+=("$i")
         done
+        _ferry_finish
         return
     fi
 
@@ -36,6 +37,20 @@ _ferry() {
             COMPREPLY[i]=${COMPREPLY[i]#"$head"}
         done
     fi
+    _ferry_finish
+}
+
+# -o nospace is set for the whole command, because a folder must not get a
+# space after it - the next TAB has to be able to carry on into it. That also
+# suppresses the space on a candidate that *is* finished, leaving TAB to redraw
+# the same word forever, so put it back here: one match, and not a folder,
+# means the word is done and the cursor should move on.
+_ferry_finish() {
+    [ ${#COMPREPLY[@]} -eq 1 ] || return
+    case ${COMPREPLY[0]} in
+        */) ;;
+        *) COMPREPLY[0]="${COMPREPLY[0]} " ;;
+    esac
 }
 # -o nosort keeps ferry's own ordering, but it is bash 4.4+ and older bash
 # rejects the whole command rather than the one option - which would leave

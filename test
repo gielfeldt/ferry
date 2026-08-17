@@ -277,16 +277,37 @@ class BashCompletion(unittest.TestCase):
         """bash replaces only the text after the last colon, so only that part
         may be handed back."""
         _, got = self.complete("ferry load store:be", ["store:acme/"])
-        self.assertEqual(got, ["acme/"])
+        self.assertEqual(got, ["acme/"])          # a folder: no space
 
     def test_a_path_keeps_everything_after_the_colon(self):
         _, got = self.complete("ferry load store:acme/b",
                                ["store:acme/bug-hunt"])
-        self.assertEqual(got, ["acme/bug-hunt"])
+        self.assertEqual(got, ["acme/bug-hunt "])   # lone match, so a space
 
     def test_a_word_with_no_colon_is_left_alone(self):
         _, got = self.complete("ferry lis", ["list"])
-        self.assertEqual(got, ["list"])
+        self.assertEqual(got, ["list "])            # lone match, so a space
+
+    def test_a_finished_word_gets_its_space(self):
+        """-o nospace is set for the whole command so a folder can be walked
+        into, which otherwise leaves TAB redrawing a finished word forever."""
+        _, got = self.complete("ferry load store:acme/bug",
+                               ["store:acme/bug-hunt"])
+        self.assertEqual(got, ["acme/bug-hunt "])
+
+    def test_a_folder_does_not_get_one(self):
+        """The next TAB has to be able to carry on into it."""
+        _, got = self.complete("ferry load store:bee", ["store:acme/"])
+        self.assertEqual(got, ["acme/"])
+
+    def test_nothing_is_appended_while_the_choice_is_open(self):
+        _, got = self.complete("ferry load store:b",
+                               ["store:acme/", "store:widgets/"])
+        self.assertEqual(got, ["acme/", "widgets/"])
+
+    def test_a_lone_command_gets_its_space_too(self):
+        _, got = self.complete("ferry loa", ["load"])
+        self.assertEqual(got, ["load "])
 
     def test_no_candidates_is_not_an_error(self):
         n, _ = self.complete("ferry load store:zz", [])
