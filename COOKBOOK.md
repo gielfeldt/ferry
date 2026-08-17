@@ -149,7 +149,7 @@ other machine are lost. Load first if in doubt.
 Two stores, two keys, two sets of eyes:
 
 ```sh
-ferry add work     git@github.com:you/work-sessions.git     --key ~/work.key
+ferry add work     git@github.com:you/work-notes.git     --key ~/work.key
 ferry add personal git@github.com:you/personal-sessions.git --key ~/personal.key
 ferry stores
 
