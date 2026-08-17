@@ -237,6 +237,93 @@ class Export(unittest.TestCase):
         self.assertTrue(out.strip().startswith("````"))
 
 
+class WhichDirectory(unittest.TestCase):
+    """A session is only unique within a directory, so listing one means
+    saying where it is - and the path shown has to be one that works."""
+
+    def test_a_slug_is_reconstructed_only_when_it_checks_out(self):
+        d = Path(tempfile.mkdtemp()).resolve()
+        slug = f.slug_dir(d).name
+        self.assertEqual(f.from_slug(slug), str(d))
+
+    def test_a_guess_that_does_not_slug_back_is_not_offered(self):
+        """Dashes in a directory name make the mapping unrecoverable, and a
+        wrong path is worse than none - it would be a ref that fails."""
+        d = Path(tempfile.mkdtemp()).resolve() / "two-words"
+        d.mkdir()
+        self.assertIsNone(f.from_slug(f.slug_dir(d).name))
+
+    def test_the_directory_shown_is_the_one_the_file_is_filed_under(self):
+        """A session can cd. Its last cwd is then not where its transcript
+        lives, and printing that gives you a ref that cannot resolve."""
+        import json as _json
+        projects = Path(tempfile.mkdtemp())
+        home = Path(tempfile.mkdtemp()).resolve()
+        started, moved = home / "here", home / "elsewhere"
+        started.mkdir(); moved.mkdir()
+        d = projects / f.slug_dir(started).name
+        d.mkdir(parents=True)
+        (d / "abc.jsonl").write_text("".join(_json.dumps(r) + "\n" for r in (
+            {"type": "user", "cwd": str(started)},
+            {"type": "user", "cwd": str(moved)})))   # cd'd away, later
+        self.assertEqual(f.session_cwd(d / "abc.jsonl"), str(started))
+
+
+class ExportRef(unittest.TestCase):
+    """Three ways to name a session, and one rule for telling them apart."""
+
+    def setUp(self):
+        import json as _json
+        self.projects = Path(tempfile.mkdtemp())
+        self.old_projects, f.CLAUDE_PROJECTS = f.CLAUDE_PROJECTS, self.projects
+        self.old_repos = f.repos
+        self.work = Path(tempfile.mkdtemp()).resolve()
+        d = self.projects / f.slug_dir(self.work).name
+        d.mkdir(parents=True)
+        (d / "abc.jsonl").write_text(_json.dumps(
+            {"type": "custom-title", "customTitle": "bug-hunt",
+             "sessionId": "abc"}) + "\n")
+        self.store = Path(tempfile.mkdtemp())
+        (self.store / "sessions" / "acme").mkdir(parents=True)
+        (self.store / "sessions" / "acme" / "bug-hunt.jsonl").write_text("{}\n")
+        f.repos = lambda: {"work": {"path": str(self.store)}}
+
+    def tearDown(self):
+        f.CLAUDE_PROJECTS = self.old_projects
+        f.repos = self.old_repos
+
+    def test_a_bare_name_is_this_directory(self):
+        cwd = os.getcwd()
+        try:
+            os.chdir(self.work)
+            self.assertEqual(f.export_source("bug-hunt").name, "abc.jsonl")
+        finally:
+            os.chdir(cwd)
+
+    def test_a_known_store_before_the_colon_is_a_store(self):
+        got = f.export_source("work:acme/bug-hunt")
+        self.assertEqual(got, self.store / "sessions/acme/bug-hunt.jsonl")
+
+    def test_anything_else_before_the_colon_is_a_directory(self):
+        got = f.export_source(f"{self.work}:bug-hunt")
+        self.assertEqual(got.name, "abc.jsonl")
+
+    def test_a_directory_ref_takes_an_id_too(self):
+        self.assertEqual(f.export_source(f"{self.work}:abc").name, "abc.jsonl")
+
+    def test_a_missing_directory_says_so_and_lists_the_stores(self):
+        with quiet() as (_, err), self.assertRaises(SystemExit):
+            f.export_source("/no/such/place:bug-hunt")
+        self.assertIn("no such directory", err.getvalue())
+        self.assertIn("work", err.getvalue())     # in case a store was meant
+
+    def test_the_message_names_the_directory_searched(self):
+        """Not "here" - the ref pointed somewhere else."""
+        with quiet() as (_, err), self.assertRaises(SystemExit):
+            f.export_source(f"{self.work}:nope")
+        self.assertIn(str(self.work), err.getvalue())
+
+
 class ClosedPipe(unittest.TestCase):
     """`ferry export … | head` closes stdout early. Python's own traceback for
     that says something went wrong, when nothing did - and piping into a pager

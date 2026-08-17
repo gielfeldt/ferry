@@ -191,10 +191,16 @@ def names_here(where):
     return out
 
 
-def find_session(spec, where):
-    """Resolve a name or id prefix to a transcript in `where`."""
+def find_session(spec, where, whose=None):
+    """Resolve a name or id prefix to a transcript in `where`.
+
+    `whose` names the directory being searched, for the messages: a ref can
+    point at another directory, and saying "here" then sends you to look in
+    the wrong one.
+    """
+    where_said = whose or "this directory"
     if not where.is_dir():
-        die(f"no sessions for this directory yet ({where})")
+        die(f"no sessions for {where_said} yet")
     here = {f.stem: f for f in where.glob("*.jsonl")}
 
     named = names_here(where)
@@ -205,9 +211,11 @@ def find_session(spec, where):
     if len(hits) == 1:
         return hits[0]
     if len(hits) > 1:
-        die(f"'{spec}' matches {len(hits)} sessions here - use a longer id")
+        die(f"'{spec}' matches {len(hits)} sessions in {where_said} - "
+            f"use a longer id")
 
-    die(f"no session called '{spec}' here. Try:  ferry sessions")
+    die(f"no session called '{spec}' in {where_said}."
+        + ("" if whose else "  Try:  ferry sessions"))
 
 
 def ai_title(jsonl):
@@ -586,20 +594,40 @@ def cmd_load(args):
 
 
 def export_source(ref):
-    """The transcript a ref names, here or in a store.
+    """The transcript a ref names. Three forms, one rule.
 
-    A colon means a store, as it does everywhere else. This is the one command
-    that reads from either, because reading is the same question wherever the
-    conversation happens to be.
+        bug-hunt                    in the directory you are standing in
+        work:acme/bug-hunt          in a store
+        ~/develop/acme:bug-hunt     in another directory on this machine
+
+    What is before the colon decides which: a store ferry knows about, or a
+    path. Stores are checked first because they are a closed set of names ferry
+    can be sure of - so a directory that shares a store's name is reached as
+    ./work:bug-hunt, which is a path and cannot be mistaken for one.
+
+    Naming the directory is what makes the third form unambiguous. Session
+    names are only unique within a directory, so a bare name searched across
+    the machine would sooner or later pick the wrong one silently.
     """
-    if ":" in ref:
+    if ":" not in ref:
+        return find_session(ref, slug_dir())
+
+    head, _, tail = ref.partition(":")
+    if head in repos():
         alias, path = split_ref(ref)
-        repo = repo_dir(alias)
-        src = repo / f"{in_store(path)}.jsonl"
+        src = repo_dir(alias) / f"{in_store(path)}.jsonl"
         if not src.is_file():
             die(f"nothing at {ref}")
         return src
-    return find_session(ref, slug_dir())
+
+    if not tail:
+        die(f"'{ref}' needs a session after the colon, e.g. {head}:bug-hunt")
+    where = Path(os.path.expanduser(head))
+    if not where.is_dir():
+        die(f"no such directory: {head}\n"
+            f"       for a store, ferry knows: "
+            f"{', '.join(sorted(repos())) or 'none yet'}")
+    return find_session(tail, slug_dir(where), whose=str(where))
 
 
 def render_markdown(jsonl, tools=False, media=None, out=sys.stdout):
@@ -918,7 +946,7 @@ NOTHING, FILES = 1, 2
 COMMANDS = {
     "add":      ["--key", "--path"],
     "stores":   [],
-    "sessions": [],
+    "sessions": ["--global"],
     "memory":   [],
     "save":     ["--memory", "--force", "--allow-plaintext"],
     "load":     ["--memory", "--force", "--name"],
@@ -1009,7 +1037,9 @@ def cmd_complete(args):
         return
 
     cmd = prev[1]
-    if cmd in NO_ARGS:
+    # Nothing positional goes here. Flags still might: `sessions` takes no
+    # arguments but does take --global.
+    if cmd in NO_ARGS and not cur.startswith("-"):
         sys.exit(NOTHING)
 
     out = [f for f in COMMANDS.get(cmd, []) if f.startswith(cur)] if \
@@ -1106,12 +1136,60 @@ def cmd_memory(args):
     print(f"\n  {len(notes)} note(s) in {mem}")
 
 
+def from_slug(slug):
+    """A path the slug could have come from, when it can be checked.
+
+    The mapping is lossy - every non-alphanumeric character became a dash - so
+    this is a guess. It is only ever returned when slugging it back gives the
+    same slug and the directory is really there, which makes it a guess that
+    has been verified rather than one being passed off as fact. Paths with a
+    dash in a name will not survive that check, and get no answer at all.
+    """
+    guess = Path("/" + slug.strip("-").replace("-", "/"))
+    if guess.is_dir() and slug_dir(guess).name == slug:
+        return str(guess)
+    return None
+
+
+def session_cwd(jsonl):
+    """The directory this transcript is filed under, as a real path.
+
+    The slug cannot be reversed - every non-alphanumeric character became a
+    dash, so `-home-a-b-c` could have been a/b/c or a/b-c. The records carry
+    real paths, so the answer is in the file; the catch is that a session can
+    `cd`, and then its later paths are not where the file lives.
+
+    So take the recorded path that slugs back to this file's own directory.
+    That is the one where `<dir>:<name>` will actually find it, which is the
+    whole point of printing it. Anything else would be a ref that does not
+    resolve - one such session on this machine ends in ~/develop/…/personal
+    while its transcript sits under the slug for …/test.
+    """
+    want, seen = jsonl.parent.name, from_slug(jsonl.parent.name)
+    try:
+        with jsonl.open(errors="replace") as fh:
+            for line in fh:
+                if '"cwd"' not in line:
+                    continue
+                try:
+                    c = json.loads(line).get("cwd")
+                except json.JSONDecodeError:
+                    continue
+                if c and slug_dir(c).name == want:
+                    seen = c
+    except OSError:
+        pass
+    return seen
+
+
 def cmd_sessions(args):
     """What is in this directory, so you know what you can save.
 
     Ids are printed in full, because the point of reading this list is usually
     to paste one into `claude --resume`.
     """
+    if getattr(args, "global_", False):
+        return sessions_everywhere()
     here = slug_dir()
     if not here.is_dir():
         print(f"no sessions for {Path.cwd()}")
@@ -1142,10 +1220,45 @@ def cmd_sessions(args):
               "/rename it before saving")
 
 
+def sessions_everywhere():
+    """Every named session on this machine, and where each one belongs.
+
+    Only the named ones: an unnamed session cannot be referred to, and the
+    point of this list is to give you something to type. The directory is what
+    makes that possible - names are unique within a directory and nowhere
+    wider, so `<dir>:<name>` is the form that always means one session.
+    """
+    rows = []
+    root = CLAUDE_PROJECTS
+    if root.is_dir():
+        for d in sorted(root.iterdir()):
+            if not d.is_dir():
+                continue
+            for f in sorted(d.glob("*.jsonl")):
+                name = session_name(f)
+                if name:
+                    rows.append((f.stat().st_mtime, name, f.stat().st_size,
+                                 session_cwd(f) or f"({d.name})"))
+    if not rows:
+        print("no named sessions on this machine")
+        return
+    width = min(max(len(r[1]) for r in rows), 30)
+    for mtime, name, size, where in sorted(rows, reverse=True):
+        when = datetime.fromtimestamp(mtime).strftime("%Y-%m-%d")
+        print(f"  {name:<{width}}  {when}  {size/1e6:6.1f} MB  {tilde(where)}")
+    print(f"\n  read one with:  ferry export <dir>:<name>")
+
+
+def tilde(path):
+    """Home as ~, because these lines are meant to be read and retyped."""
+    home = str(Path.home())
+    return "~" + path[len(home):] if path.startswith(home) else path
+
+
 USAGE = """\
   ferry add <name> <git-url> [--key <file>] [--path <dir>]
   ferry stores
-  ferry sessions
+  ferry sessions [--global]
   ferry memory
   ferry save <session> [to] <store>:<dir> [--force]
   ferry save --memory [to] <store>:<dir> [--force]
@@ -1155,7 +1268,8 @@ USAGE = """\
   ferry move --memory <store>:<dir> <store>:<dir> [--force]
   ferry list [<store>[:<path>]]           without a store, same as `stores`
   ferry list --memory [<store>[:<dir>]]
-  ferry export <session>|<store>:<path> [--tools] [--media <dir>] [--raw]
+  ferry export <session>|<store>:<path>|<dir>:<session>
+               [--tools] [--media <dir>] [--raw]
   ferry update [<store>]\
 """
 
@@ -1168,6 +1282,7 @@ examples:
 
   what have I got here
     ferry sessions
+    ferry sessions --global                       everywhere, and where each is
     ferry memory
 
   send it
@@ -1184,6 +1299,7 @@ examples:
   read one
     ferry export bug-hunt                         as markdown, to stdout
     ferry export work:acme/bug-hunt --tools       with what the tools did
+    ferry export ~/develop/acme:bug-hunt          one in another directory
     ferry export bug-hunt --raw > bug-hunt.jsonl  the transcript itself
 
   tidy the store up
@@ -1220,6 +1336,8 @@ def main():
     p.set_defaults(func=cmd_stores)
 
     p = sub.add_parser("sessions", help="sessions in this directory")
+    p.add_argument("--global", dest="global_", action="store_true",
+                   help="every named session on this machine, and where")
     p.set_defaults(func=cmd_sessions)
 
     p = sub.add_parser("memory", help="what this directory remembers")

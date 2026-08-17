@@ -57,7 +57,7 @@ accident.
 ```
 ferry add <name> <git-url> [--key <file>] [--path <dir>]
 ferry stores
-ferry sessions
+ferry sessions [--global]
 ferry memory
 ferry save <session> [to] <store>:<dir> [--force]
 ferry save --memory [to] <store>:<dir> [--force]
@@ -65,7 +65,7 @@ ferry load <store>:<path> [--force]
 ferry load --memory <store>:<dir> [--force]
 ferry move <store>:<path> <store>:<dir> [--force]
 ferry move --memory <store>:<dir> <store>:<dir> [--force]
-ferry export <session>|<store>:<path> [--tools] [--media <dir>] [--raw]
+ferry export <session>|<store>:<path>|<dir>:<session> [--tools] [--media <dir>] [--raw]
 ferry list [<store>[:<path>]]
 ferry list --memory [<store>[:<dir>]]
 ferry update [<store>]
@@ -77,6 +77,7 @@ ferry add work --path ~/develop/sessions      # adopt a checkout you have
 ferry stores
 
 ferry sessions                                # sessions in this directory
+ferry sessions --global                       # every named session, and where
 ferry memory                                  # notes in this directory
 
 ferry save bug-hunt to work:acme              # -> acme/bug-hunt.jsonl
@@ -128,10 +129,24 @@ rename, `/rename` the session and save it again.
 sessions and memory in separate trees, so nothing has to be inferred from a
 path — and a session may be called `memory` like anything else.
 
-**`export` reads from either side.** Every other command goes one way — `save`
+**`export` reads from anywhere.** Every other command goes one way — `save`
 out of here, `load` into here — so which end a ref names is never in doubt.
-Reading is the same question wherever the conversation sits, so `export` takes
-a local name or a `store:path`, and a colon says which.
+Reading is the same question wherever the conversation sits, so a ref can name
+three things:
+
+```sh
+ferry export bug-hunt                     # this directory
+ferry export work:acme/bug-hunt           # a store
+ferry export ~/develop/acme:bug-hunt      # another directory on this machine
+```
+
+What is before the colon decides: a store ferry knows about, or a path. Stores
+win, being a closed set of names, so a directory sharing a store's name is
+reached as `./work:bug-hunt`. Naming the directory is what makes the third form
+safe — session names are unique only within a directory, so a bare name hunted
+across the machine would eventually pick the wrong one without saying so.
+`ferry sessions --global` lists what there is, with a path for each that is
+checked to resolve.
 
 What it prints is the conversation: what you asked, what Claude answered, and
 one line per tool call. That is about 1% of a transcript — a 17.9 MB session

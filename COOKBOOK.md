@@ -181,9 +181,22 @@ says so:
 Without resuming it, and without hunting for the file:
 
 ```sh
-ferry export bug-hunt | less
+ferry export bug-hunt | less                 # in this directory
 ferry export work:acme/bug-hunt              # straight out of the store
+ferry export ~/develop/acme:bug-hunt         # a session in another directory
 ```
+
+To find one when you have forgotten where it was:
+
+```sh
+ferry sessions --global
+#   bug-hunt      2026-08-17   1.2 MB  ~/develop/acme
+#   deploy-fix    2026-08-16   4.0 MB  ~/work/ops
+```
+
+Every path it prints is one `export` can resolve — a session that changed
+directory mid-run is listed under the directory its transcript is filed in,
+not the one it wandered to.
 
 You get the conversation as markdown — prompts, replies, and a line per tool
 call. Tool results are left out, which is most of the file: a 17.9 MB session
