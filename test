@@ -947,10 +947,16 @@ class Completion(unittest.TestCase):
 
     def test_sessions_completes_directories(self):
         """The argument is a directory, so the ones holding sessions are the
-        useful answers - offered without a colon, since this is not a ref."""
-        got = self.complete_line("ferry sessions ")
-        if not got:
+        useful answers - offered without a colon, since this is not a ref.
+
+        The status is checked first: with no sessions at all, which is the case
+        on CI, this position exits FILES rather than returning an empty list,
+        and complete_line would raise rather than hand back nothing.
+        """
+        if self.status_of("ferry sessions ") != 0:
             self.skipTest("no sessions on this machine")
+        got = self.complete_line("ferry sessions ")
+        self.assertTrue(got)
         self.assertTrue(all(not c.endswith(":") for c in got))
 
     def test_move_completes(self):

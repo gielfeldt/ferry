@@ -29,6 +29,16 @@ and anything else from 3.10 onwards will pass locally and fail on CI.
 ./test Export   # one class
 ```
 
+Run them once against a machine that has nothing:
+
+```sh
+HOME=$(mktemp -d) ./test
+```
+
+Several tests skip when there is no registered store or no sessions, and it is
+easy to write one that quietly depends on yours - it passes for you and fails
+on CI, where neither exists. That is what happened to v1.2.14.
+
 Needs python3, and `bash` for the handful that run the completion script for
 real. Nothing else: no network, no git repo, no store, and never your actual
 `~/.claude` — anything that would need one builds a temporary copy, and the
