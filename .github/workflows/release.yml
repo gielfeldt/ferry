@@ -23,17 +23,23 @@ jobs:
         with:
           python-version: "3.13"
 
-      - name: The tag and the version have to agree
-        run: |
-          tag="${GITHUB_REF_NAME#v}"
-          said="$(python3 ferry --version | awk '{print $2}')"
-          if [ "$tag" != "$said" ]; then
-            echo "tag v$tag but ferry says $said - bump __version__ first" >&2
-            exit 1
-          fi
-          echo "ferry $said, tagged v$tag"
-
       - run: ./test
+
+      - name: Stamp the version from the tag
+        run: |
+          # The tag is the only place a version number is written down. The
+          # file in the repo carries a dev marker, so a copy taken from a
+          # checkout cannot claim to be a release it is not.
+          version="${GITHUB_REF_NAME#v}"
+          grep -q '^__version__ = "0.0.0+dev"' ferry || {
+            echo "ferry has a version already - it should carry the dev marker" >&2
+            exit 1
+          }
+          sed -i "s/^__version__ = .*/__version__ = \"$version\"/" ferry
+          said="$(python3 ferry --version | awk '{print $2}')"
+          [ "$said" = "$version" ] || {
+            echo "stamped $version but ferry says $said" >&2; exit 1; }
+          echo "ferry $said"
 
       - name: Release
         env:

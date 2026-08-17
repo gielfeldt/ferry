@@ -17,7 +17,9 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-__version__ = "1.2.7"
+# Set by the release workflow from the tag it was built for. A copy taken
+# straight from the repo says so, rather than claiming to be a release.
+__version__ = "0.0.0+dev"
 
 CONFIG = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config") / "ferry"
 CONFIG_FILE = CONFIG / "repos.json"
