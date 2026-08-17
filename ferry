@@ -651,41 +651,42 @@ def render_markdown(jsonl, tools=False, media=None, out=sys.stdout):
     out.write(f"# {name}\n\n*{sid}*\n")
     first = last = None
 
-    for line in jsonl.open(errors="replace"):
-        try:
-            o = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if o.get("type") not in ("user", "assistant"):
-            continue
-        when = (o.get("timestamp") or "")[:16].replace("T", " ")
-        first = first or when
-        last = when or last
-        msg = o.get("message") or {}
-        body = msg.get("content")
-
-        # A plain string is something you typed; a list is a turn Claude Code
-        # assembled, which may be a tool result rather than anything said.
-        if isinstance(body, str):
-            if body.strip() and not body.startswith("<"):
-                out.write(f"\n## You · {when[11:]}\n\n{body.strip()}\n")
-            continue
-
-        for b in body or []:
-            if not isinstance(b, dict):
+    with jsonl.open(errors="replace") as fh:
+        for line in fh:
+            try:
+                o = json.loads(line)
+            except json.JSONDecodeError:
                 continue
-            kind = b.get("type")
-            if kind == "text" and b.get("text", "").strip():
-                out.write(f"\n## Claude · {when[11:]}\n\n{b['text'].strip()}\n")
-            elif kind == "tool_use":
-                out.write(render_tool_use(b, tools))
-            elif kind == "tool_result" and tools:
-                r = b.get("content")
-                r = r if isinstance(r, str) else json.dumps(r, indent=2)
-                out.write(fenced(r))
-            elif kind == "image":
-                shot += 1
-                out.write(render_image(b, shot, media, jsonl))
+            if o.get("type") not in ("user", "assistant"):
+                continue
+            when = (o.get("timestamp") or "")[:16].replace("T", " ")
+            first = first or when
+            last = when or last
+            msg = o.get("message") or {}
+            body = msg.get("content")
+
+            # A plain string is something you typed; a list is a turn Claude Code
+            # assembled, which may be a tool result rather than anything said.
+            if isinstance(body, str):
+                if body.strip() and not body.startswith("<"):
+                    out.write(f"\n## You · {when[11:]}\n\n{body.strip()}\n")
+                continue
+
+            for b in body or []:
+                if not isinstance(b, dict):
+                    continue
+                kind = b.get("type")
+                if kind == "text" and b.get("text", "").strip():
+                    out.write(f"\n## Claude · {when[11:]}\n\n{b['text'].strip()}\n")
+                elif kind == "tool_use":
+                    out.write(render_tool_use(b, tools))
+                elif kind == "tool_result" and tools:
+                    r = b.get("content")
+                    r = r if isinstance(r, str) else json.dumps(r, indent=2)
+                    out.write(fenced(r))
+                elif kind == "image":
+                    shot += 1
+                    out.write(render_image(b, shot, media, jsonl))
 
     if first:
         out.write(f"\n---\n\n*{first} - {last}*\n")
@@ -1390,16 +1391,16 @@ def main():
     ap = argparse.ArgumentParser(
         prog="ferry", usage="\n" + USAGE, description=__doc__, epilog=EXAMPLES,
         formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--version", action="version", version=f"ferry {__version__}")
+    ap.add_argument("-V", "--version", action="version", version=f"ferry {__version__}")
     # Not required: bare `ferry` should show the help rather than an error.
     sub = ap.add_subparsers(dest="cmd", metavar="<command>")
 
     p = sub.add_parser("add", help="register a store")
     p.add_argument("name", metavar="<name>")
     p.add_argument("url", nargs="?", metavar="<git-url>")
-    p.add_argument("--path", metavar="<dir>",
+    p.add_argument("-p", "--path", metavar="<dir>",
                    help="adopt a checkout you already have")
-    p.add_argument("--key", metavar="<file>",
+    p.add_argument("-k", "--key", metavar="<file>",
                    help="git-crypt key to unlock it with")
     p.set_defaults(func=cmd_add)
 
@@ -1407,9 +1408,9 @@ def main():
     p.set_defaults(func=cmd_stores)
 
     p = sub.add_parser("sessions", help="sessions in this directory")
-    p.add_argument("--global", dest="global_", action="store_true",
+    p.add_argument("-g", "--global", dest="global_", action="store_true",
                    help="every named session on this machine, and where")
-    p.add_argument("--all", action="store_true",
+    p.add_argument("-a", "--all", action="store_true",
                    help="include unnamed sessions, listed by id")
     p.set_defaults(func=cmd_sessions)
 
@@ -1418,9 +1419,9 @@ def main():
 
     p = sub.add_parser("save", help="copy a session or memory into a store")
     p.add_argument("words", nargs="+", metavar="<session> [to] <store>:<dir>")
-    p.add_argument("--memory", action="store_true",
+    p.add_argument("-m", "--memory", action="store_true",
                    help="this directory's memory, not a session")
-    p.add_argument("--force", action="store_true",
+    p.add_argument("-f", "--force", action="store_true",
                    help="overwrite even if the stored copy is longer")
     p.add_argument("--allow-plaintext", action="store_true",
                    help="commit even though the store has no git-crypt")
@@ -1428,38 +1429,38 @@ def main():
 
     p = sub.add_parser("load", help="copy a session or memory into this directory")
     p.add_argument("target", metavar="<store>:<path>", nargs="+")
-    p.add_argument("--memory", action="store_true",
+    p.add_argument("-m", "--memory", action="store_true",
                    help="memory from <store>:<dir>, not a session")
-    p.add_argument("--name", metavar="<name>",
+    p.add_argument("-n", "--name", metavar="<name>",
                    help="the name to suggest restoring")
-    p.add_argument("--force", action="store_true",
+    p.add_argument("-f", "--force", action="store_true",
                    help="overwrite even if the local copy is longer")
     p.set_defaults(func=cmd_load)
 
     p = sub.add_parser("move", help="re-file something inside a store")
     p.add_argument("source", metavar="<store>:<path>")
     p.add_argument("dest", metavar="<store>:<dir>")
-    p.add_argument("--memory", action="store_true",
+    p.add_argument("-m", "--memory", action="store_true",
                    help="that folder's memory, not a session of the same name")
-    p.add_argument("--force", action="store_true",
+    p.add_argument("-f", "--force", action="store_true",
                    help="replace whatever is already at the destination")
     p.set_defaults(func=cmd_move)
 
     p = sub.add_parser("export", help="print a session as markdown")
     p.add_argument("session", metavar="<session>|<store>:<path>")
-    p.add_argument("--tools", action="store_true",
+    p.add_argument("-t", "--tools", action="store_true",
                    help="include tool calls and their results")
     p.add_argument("--media", metavar="<dir>",
                    help="write images there and link them")
-    p.add_argument("--raw", action="store_true",
+    p.add_argument("-r", "--raw", action="store_true",
                    help="the transcript exactly as it is")
-    p.add_argument("--all", action="store_true",
+    p.add_argument("-a", "--all", action="store_true",
                    help="complete unnamed sessions too, by id")
     p.set_defaults(func=cmd_export)
 
     p = sub.add_parser("list", help="what a store holds, or the stores")
     p.add_argument("ref", nargs="?", metavar="<store>[:<path>]")
-    p.add_argument("--memory", action="store_true",
+    p.add_argument("-m", "--memory", action="store_true",
                    help="memory rather than sessions")
     p.set_defaults(func=cmd_list)
 

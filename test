@@ -241,10 +241,26 @@ class WhichDirectory(unittest.TestCase):
     """A session is only unique within a directory, so listing one means
     saying where it is - and the path shown has to be one that works."""
 
-    def test_a_slug_is_reconstructed_only_when_it_checks_out(self):
-        d = Path(tempfile.mkdtemp()).resolve()
-        slug = f.slug_dir(d).name
-        self.assertEqual(f.from_slug(slug), str(d))
+    def test_a_reconstruction_is_right_or_absent_but_never_wrong(self):
+        """The invariant, which holds for any path.
+
+        No positive case is asserted here on purpose: whether a given path can
+        be reconstructed depends on the characters in it, and a temporary
+        directory is not something the test chooses - mkdtemp produced
+        /tmp/tmpq_zortnt on one run, whose underscore makes the slug
+        indistinguishable from a directory boundary. Asserting reconstruction
+        always works made this test fail about one run in three.
+        """
+        for _ in range(20):
+            d = Path(tempfile.mkdtemp()).resolve()
+            self.assertIn(f.from_slug(f.slug_dir(d).name), (str(d), None))
+
+    def test_a_plain_path_does_come_back(self):
+        d = Path(tempfile.mkdtemp()).resolve() / "plainname"
+        d.mkdir()
+        if f.from_slug(f.slug_dir(d.parent).name) is None:
+            self.skipTest("this run's temp directory is not reconstructible")
+        self.assertEqual(f.from_slug(f.slug_dir(d).name), str(d))
 
     def test_a_guess_that_does_not_slug_back_is_not_offered(self):
         """Dashes in a directory name make the mapping unrecoverable, and a
@@ -864,6 +880,19 @@ class Completion(unittest.TestCase):
         finally:
             f.names_here = old
 
+    def test_a_short_flag_never_means_two_things(self):
+        """-m is --memory in four commands. A fifth where it meant --media
+        would be worse than having no short form there at all."""
+        import collections
+        pairs = re.findall(r'add_argument\("(-[a-zA-Z])", "(--[a-z-]+)"',
+                           FERRY.read_text())
+        self.assertTrue(pairs, "no short flags found - did the syntax change?")
+        by_letter = collections.defaultdict(set)
+        for short, long in pairs:
+            by_letter[short].add(long)
+        clashes = {k: sorted(v) for k, v in by_letter.items() if len(v) > 1}
+        self.assertEqual(clashes, {})
+
     def test_the_top_level_flags_are_offered(self):
         self.assertEqual(self.complete_line("ferry --vers"), ["--version"])
         self.assertEqual(self.complete_line("ferry -"), ["--help", "--version"])
@@ -955,7 +984,7 @@ class CommandLine(unittest.TestCase):
         self.originals = {}
         for name in ("cmd_add", "cmd_stores", "cmd_sessions", "cmd_memory",
                      "cmd_save", "cmd_load", "cmd_move", "cmd_list",
-                     "cmd_update"):
+                     "cmd_update", "cmd_export"):
             self.originals[name] = getattr(f, name)
             setattr(f, name, lambda args, n=name: self.calls.append((n, args)))
 
@@ -968,6 +997,17 @@ class CommandLine(unittest.TestCase):
         with quiet() as (out, err):
             f.main()
         return out.getvalue(), err.getvalue()
+
+    def test_the_shorts_actually_parse(self):
+        for argv, attr in ((["sessions", "-g"], "global_"),
+                           (["sessions", "-a"], "all"),
+                           (["save", "-m", "to", "work:x"], "memory"),
+                           (["load", "-f", "work:x/y"], "force"),
+                           (["export", "-t", "x"], "tools"),
+                           (["export", "-r", "x"], "raw")):
+            with self.subTest(argv=argv):
+                self.run_ferry(*argv)
+                self.assertTrue(getattr(self.calls[-1][1], attr))
 
     def test_bare_ferry_prints_help(self):
         out, _ = self.run_ferry()

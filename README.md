@@ -178,6 +178,12 @@ they are noted where they appeared, and written out beside it with `--media`.
 
 `--force` overrides the first four, when you mean it.
 
+Most flags have a short form — `-m` `--memory`, `-f` `--force`, `-a` `--all`,
+`-g` `--global`, `-n` `--name`, `-k` `--key`, `-p` `--path`, `-t` `--tools`,
+`-r` `--raw`, `-V` `--version` — and a letter never means two things. That is
+why `--media` has none: `-m` is already memory in four commands. Nor does
+`--allow-plaintext`, where typing it out is the point.
+
 ## How it works
 
 Claude Code stores transcripts in `~/.claude/projects/<slug>/`, where `<slug>`
