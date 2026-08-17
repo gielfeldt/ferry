@@ -12,14 +12,15 @@ _ferry() {
     (( status == 2 )) && { _files; return }
     candidates=(${(f)raw})
     (( ${#candidates} )) || return
-    # A folder must not get a space after it, so the next TAB can carry on into
-    # it; anything else is a finished word and should move the cursor on.
-    local -a folders words
+    # A candidate you carry on from must not get a space after it: a slash
+    # walks into a folder, a colon is a store waiting for a path. Anything
+    # else is a finished word and should move the cursor on.
+    local -a partial complete
     local c
     for c in $candidates; do
-        [[ $c == */ ]] && folders+=($c) || words+=($c)
+        [[ $c == */ || $c == *: ]] && partial+=($c) || complete+=($c)
     done
-    (( ${#folders} )) && compadd -S '' -a folders
-    (( ${#words} )) && compadd -a words
+    (( ${#partial} )) && compadd -S '' -a partial
+    (( ${#complete} )) && compadd -a complete
 }
 _ferry "$@"

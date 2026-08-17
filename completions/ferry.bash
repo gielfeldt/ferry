@@ -40,15 +40,17 @@ _ferry() {
     _ferry_finish
 }
 
-# -o nospace is set for the whole command, because a folder must not get a
-# space after it - the next TAB has to be able to carry on into it. That also
-# suppresses the space on a candidate that *is* finished, leaving TAB to redraw
-# the same word forever, so put it back here: one match, and not a folder,
-# means the word is done and the cursor should move on.
+# -o nospace is set for the whole command, because a candidate you carry on
+# from must not get a space after it. That also suppresses the space on one
+# that *is* finished, leaving TAB to redraw the same word forever, so put it
+# back here - but only for a word that is actually done.
+#
+# Two endings mean "keep going": a slash, which walks into a folder, and a
+# colon, which is a store waiting for a path after it.
 _ferry_finish() {
     [ ${#COMPREPLY[@]} -eq 1 ] || return
     case ${COMPREPLY[0]} in
-        */) ;;
+        */|*:) ;;
         *) COMPREPLY[0]="${COMPREPLY[0]} " ;;
     esac
 }

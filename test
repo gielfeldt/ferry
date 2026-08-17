@@ -300,6 +300,12 @@ class BashCompletion(unittest.TestCase):
         _, got = self.complete("ferry load store:bee", ["store:acme/"])
         self.assertEqual(got, ["acme/"])
 
+    def test_a_store_name_does_not_get_one_either(self):
+        """`store:` is a store waiting for a path, not a finished word - a
+        space there breaks the ref outright."""
+        _, got = self.complete("ferry load --memory priv", ["private:"])
+        self.assertEqual(got, ["private:"])
+
     def test_nothing_is_appended_while_the_choice_is_open(self):
         _, got = self.complete("ferry load store:b",
                                ["store:acme/", "store:widgets/"])
