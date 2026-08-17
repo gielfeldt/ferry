@@ -679,7 +679,13 @@ def render_tool_use(b, tools):
 
 
 def render_image(b, n, media, jsonl):
-    """Images cannot go in the text. Note them, or write them out and link."""
+    """Images cannot go in the text. Note them, or write them out and link.
+
+    The link is the path you asked for, verbatim - `--media shots` links
+    `shots/…`, `--media /tmp/shots` links `/tmp/shots/…`. ferry is writing to
+    stdout and cannot know where that ends up, so anything cleverer would be a
+    guess about where you are going to put the markdown.
+    """
     src = b.get("source") or {}
     data = src.get("data") or ""
     kind = (src.get("media_type") or "image/png").split("/")[-1]
@@ -691,7 +697,7 @@ def render_image(b, n, media, jsonl):
         (media / name).write_bytes(base64.b64decode(data))
     except (ValueError, OSError) as e:
         return f"\n> [image {n}: could not be written - {e}]\n"
-    return f"\n![image {n}]({media.name}/{name})\n"
+    return f"\n![image {n}]({media.as_posix()}/{name})\n"
 
 
 def fenced(text, lang=""):

@@ -210,7 +210,24 @@ class Export(unittest.TestCase):
         written = sorted(d.glob("*.png"))
         self.assertEqual(len(written), 1)
         self.assertTrue(written[0].read_bytes().startswith(b"\x89PNG"))
-        self.assertIn(f"media/{written[0].name}", got)
+        # The link is the path that was asked for, not just its last part -
+        # ferry writes to stdout and cannot know where the markdown will land.
+        self.assertIn(f"{d.as_posix()}/{written[0].name}", got)
+
+    def test_a_relative_media_path_links_relatively(self):
+        import base64 as _b64
+        png = _b64.b64encode(b"\x89PNG\r\n\x1a\n").decode()
+        tr = self.transcript({"type": "user", "message": {"role": "user",
+            "content": [{"type": "image", "source": {
+                "type": "base64", "media_type": "image/png", "data": png}}]}})
+        here = Path(tempfile.mkdtemp())
+        cwd = os.getcwd()
+        try:
+            os.chdir(here)
+            got = self.render(tr, media=Path("shots"))
+        finally:
+            os.chdir(cwd)
+        self.assertIn("(shots/", got)
 
     def test_a_fence_survives_backticks_in_the_content(self):
         """A tool result full of markdown must not break out of its block."""
