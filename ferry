@@ -1362,11 +1362,13 @@ def cmd_complete(args):
             # anything else is an ordinary path, and the shell can finish it.
             if len(prev) == 2:
                 here = memory_dirs() if cmd == "memory" else None
+                # Anywhere with sessions, named or not: `sessions <dir>` says
+                # how many are unnamed and how to see them, so a directory of
+                # them is a useful answer rather than a dead end. That is not
+                # true of `export`, which needs something it can name.
                 out = sorted(tilde(d) for d in here) if here is not None else \
-                    [d[:-1] for d in dir_refs(given(words, "--all", "-a"))]
+                    [d[:-1] for d in dir_refs(everything=True)]
                 out = [d for d in out if d.startswith(cur)]
-                if not out:
-                    sys.exit(FILES)
         elif cmd == "update":
             out = [n for n in sorted(repos()) if n.startswith(cur)]
         elif cmd == "list":
@@ -1417,8 +1419,6 @@ def cmd_complete(args):
                         + [c if c.endswith(":") else c + "/"
                            for c in store_refs(cur, "memory")]
                 out = [c for c in out if c.startswith(cur)]
-                if not out and (cur.startswith(("~", "/", ".")) or "/" in cur):
-                    sys.exit(FILES)
             elif len(prev) == 2:
                 everything = given(words, "--all", "-a")
                 head, sep, tail = cur.partition(":")
@@ -1430,12 +1430,10 @@ def cmd_complete(args):
                            for n in sorted(refs_in(slug_dir(where), everything))
                            if n.startswith(tail)] if where.is_dir() else []
                 elif not sep and (cur.startswith(("~", "/", ".")) or "/" in cur):
-                    # A path is being typed. Offer the directories that have
-                    # sessions in them; if none match, it is an ordinary path
-                    # and the shell can finish it.
+                    # A path is being typed: the directories that hold
+                    # sessions. Not every directory - completing to one with
+                    # nothing in it would be offering a ref that fails.
                     out = [d for d in dir_refs(everything) if d.startswith(cur)]
-                    if not out:
-                        sys.exit(FILES)
                 else:
                     out = sorted(n for n in refs_in(slug_dir(), everything)
                                  if n.startswith(cur)) \

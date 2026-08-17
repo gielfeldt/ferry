@@ -1290,6 +1290,36 @@ class Completion(unittest.TestCase):
     def test_export_memory_never_offers_a_session(self):
         self.assertNotIn("bug-hunt", self.complete_line("ferry export -m "))
 
+    def test_completion_never_offers_a_ref_that_would_fail(self):
+        """A directory with no *named* session has no ref `export` could take,
+        so nothing is offered rather than a path that dead-ends. It used to
+        fall through to filename completion, which walked you into one."""
+        import json as _json
+        bare = Path(tempfile.mkdtemp()).resolve() / "nothing-named"
+        bare.mkdir(parents=True)
+        d = self.projects / f.slug_dir(bare).name
+        d.mkdir(parents=True)
+        (d / "x.jsonl").write_text(_json.dumps(
+            {"type": "user", "cwd": str(bare)}) + "\n")
+        typed = f"ferry export {f.tilde(str(bare))[:-3]}"
+        self.assertEqual(self.complete_line(typed), [])
+        # with --all an id can name it, so then there is something to offer
+        self.assertTrue(self.complete_line(f"ferry export -a "
+                                           f"{f.tilde(str(bare))[:-3]}"))
+
+    def test_sessions_still_offers_a_directory_of_unnamed_ones(self):
+        """`ferry sessions <dir>` reports how many are unnamed and how to see
+        them, so it is not a dead end the way an export ref would be."""
+        import json as _json
+        bare = Path(tempfile.mkdtemp()).resolve() / "only-unnamed"
+        bare.mkdir(parents=True)
+        d = self.projects / f.slug_dir(bare).name
+        d.mkdir(parents=True)
+        (d / "x.jsonl").write_text(_json.dumps(
+            {"type": "user", "cwd": str(bare)}) + "\n")
+        self.assertIn(f.tilde(str(bare)),
+                      self.complete_line("ferry sessions "))
+
     def test_move_completes(self):
         self.assertEqual(self.complete_line("ferry mo"), ["move"])
         self.assertIn("--memory", self.complete_line("ferry move -"))

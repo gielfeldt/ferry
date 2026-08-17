@@ -319,6 +319,12 @@ filenames. Where nothing belongs at all, such as after `ferry stores`, nothing
 is offered, not even a filename. An empty list cannot tell those two apart, so
 `ferry complete` says which by its exit status.
 
+Nothing is offered that would not work. Directories are completed from the
+ones that actually hold what the command needs, not from the filesystem, so
+TAB cannot walk you into a directory with nothing in it — `ferry export
+<TAB>` skips one whose sessions are all unnamed, because there would be no ref
+to name them by, while `--all` brings it back since an id is then a handle.
+
 Naming the local sessions means reading each transcript, which sounds slow and
 is not - about 0.2s for 60 MB, because the name is on a line that is cheap to
 recognise. Names inside the *store* are still not offered: those files are
