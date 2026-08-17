@@ -7,6 +7,7 @@ repo in the middle. Nothing runs on its own, nothing is linked, nothing is
 watched: it does exactly what you type, when you type it.
 """
 import argparse
+import base64
 import json
 import os
 import re
@@ -584,6 +585,138 @@ def cmd_load(args):
     print(f"  resume it here with:  claude --resume {name}")
 
 
+def export_source(ref):
+    """The transcript a ref names, here or in a store.
+
+    A colon means a store, as it does everywhere else. This is the one command
+    that reads from either, because reading is the same question wherever the
+    conversation happens to be.
+    """
+    if ":" in ref:
+        alias, path = split_ref(ref)
+        repo = repo_dir(alias)
+        src = repo / f"{in_store(path)}.jsonl"
+        if not src.is_file():
+            die(f"nothing at {ref}")
+        return src
+    return find_session(ref, slug_dir())
+
+
+def render_markdown(jsonl, tools=False, media=None, out=sys.stdout):
+    """The conversation, as markdown.
+
+    What is left out is most of the file: tool results, which are the bulk of
+    any real session, and the attachment records Claude Code keeps for its own
+    bookkeeping - skill listings, task reminders. --tools puts the first back.
+
+    Images cannot go in the text, so they are noted where they appeared and
+    written out beside it when asked for.
+    """
+    name = session_name(jsonl) or jsonl.stem[:8]
+    # In a store the filename is the name, so the id has to come from inside -
+    # which is where it lives anyway.
+    sid = session_id_of(jsonl) or jsonl.stem
+    shot = 0
+    if media:
+        media.mkdir(parents=True, exist_ok=True)
+
+    out.write(f"# {name}\n\n*{sid}*\n")
+    first = last = None
+
+    for line in jsonl.open(errors="replace"):
+        try:
+            o = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if o.get("type") not in ("user", "assistant"):
+            continue
+        when = (o.get("timestamp") or "")[:16].replace("T", " ")
+        first = first or when
+        last = when or last
+        msg = o.get("message") or {}
+        body = msg.get("content")
+
+        # A plain string is something you typed; a list is a turn Claude Code
+        # assembled, which may be a tool result rather than anything said.
+        if isinstance(body, str):
+            if body.strip() and not body.startswith("<"):
+                out.write(f"\n## You · {when[11:]}\n\n{body.strip()}\n")
+            continue
+
+        for b in body or []:
+            if not isinstance(b, dict):
+                continue
+            kind = b.get("type")
+            if kind == "text" and b.get("text", "").strip():
+                out.write(f"\n## Claude · {when[11:]}\n\n{b['text'].strip()}\n")
+            elif kind == "tool_use":
+                out.write(render_tool_use(b, tools))
+            elif kind == "tool_result" and tools:
+                r = b.get("content")
+                r = r if isinstance(r, str) else json.dumps(r, indent=2)
+                out.write(fenced(r))
+            elif kind == "image":
+                shot += 1
+                out.write(render_image(b, shot, media, jsonl))
+
+    if first:
+        out.write(f"\n---\n\n*{first} - {last}*\n")
+
+
+def render_tool_use(b, tools):
+    """A tool call: one line to say it happened, or the whole call."""
+    name = b.get("name", "tool")
+    args = b.get("input") or {}
+    if tools:
+        return f"\n**{name}**\n" + fenced(json.dumps(args, indent=2), "json")
+    # The one field worth a glance, which is not the same field every time.
+    gist = args.get("command") or args.get("file_path") or args.get("pattern") \
+        or args.get("description") or json.dumps(args)
+    gist = " ".join(str(gist).split())
+    if len(gist) > 80:
+        gist = gist[:79] + "\u2026"
+    return f"\n> **{name}** `{gist}`\n"
+
+
+def render_image(b, n, media, jsonl):
+    """Images cannot go in the text. Note them, or write them out and link."""
+    src = b.get("source") or {}
+    data = src.get("data") or ""
+    kind = (src.get("media_type") or "image/png").split("/")[-1]
+    size = len(data) * 3 // 4
+    if not media:
+        return f"\n> [image \u00b7 {kind} \u00b7 {size // 1024} KB]\n"
+    name = f"{jsonl.stem[:8]}-{n}.{kind}"   # enough to tell sessions apart
+    try:
+        (media / name).write_bytes(base64.b64decode(data))
+    except (ValueError, OSError) as e:
+        return f"\n> [image {n}: could not be written - {e}]\n"
+    return f"\n![image {n}]({media.name}/{name})\n"
+
+
+def fenced(text, lang=""):
+    """A code block that cannot be broken by backticks in what it holds."""
+    text = (text or "").rstrip()
+    fence = "```"
+    while fence in text:
+        fence += "`"
+    return f"\n{fence}{lang}\n{text}\n{fence}\n"
+
+
+def cmd_export(args):
+    """Print a session: as markdown, or exactly as it is on disk."""
+    src = export_source(args.session)
+    if args.raw:
+        if args.tools or args.media:
+            die("--raw is the file itself, so --tools and --media have "
+                "nothing to add to it")
+        with src.open(errors="replace") as fh:
+            shutil.copyfileobj(fh, sys.stdout)
+        return
+    render_markdown(src, tools=args.tools,
+                    media=Path(args.media) if args.media else None)
+
+
 def cmd_move(args):
     """Re-file something inside a store, keeping the name it already has.
 
@@ -759,7 +892,7 @@ def list_one(alias, path, memory):
 
 
 # Options whose value is a path on this machine.
-FILE_FLAGS = {"--key", "--path"}
+FILE_FLAGS = {"--key", "--path", "--media"}
 
 # Options whose value is a name you are about to invent, which nothing can
 # guess and no file will match either.
@@ -784,6 +917,7 @@ COMMANDS = {
     "save":     ["--memory", "--force", "--allow-plaintext"],
     "load":     ["--memory", "--force", "--name"],
     "move":     ["--memory", "--force"],
+    "export":   ["--tools", "--media", "--raw"],
     "list":     ["--memory"],
     "update":   [],
 }
@@ -894,6 +1028,12 @@ def cmd_complete(args):
                 out = store_refs(cur)
                 if len(prev) == (2 if memory else 3) and "to".startswith(cur):
                     out.append("to")
+        elif cmd == "export":
+            # Reads from either side, so offer both: what is here, and what a
+            # store holds.
+            if len(prev) == 2:
+                out = sorted(n for n in names_here(slug_dir())
+                             if n.startswith(cur)) + store_refs(cur, "session")
         elif cmd == "move":
             # source takes what --memory says it takes; the destination is
             # always a folder to put it in
@@ -1009,6 +1149,7 @@ USAGE = """\
   ferry move --memory <store>:<dir> <store>:<dir> [--force]
   ferry list [<store>[:<path>]]           without a store, same as `stores`
   ferry list --memory [<store>[:<dir>]]
+  ferry export <session>|<store>:<path> [--tools] [--media <dir>] [--raw]
   ferry update [<store>]\
 """
 
@@ -1033,6 +1174,11 @@ examples:
     ferry load work:acme/bug-hunt                 a session
     ferry load --memory work:acme                 that folder's memory
     ferry update work
+
+  read one
+    ferry export bug-hunt                         as markdown, to stdout
+    ferry export work:acme/bug-hunt --tools       with what the tools did
+    ferry export bug-hunt --raw > bug-hunt.jsonl  the transcript itself
 
   tidy the store up
     ferry move --memory work:acme work:acme-v2    -> acme-v2/memory
@@ -1101,6 +1247,16 @@ def main():
     p.add_argument("--force", action="store_true",
                    help="replace whatever is already at the destination")
     p.set_defaults(func=cmd_move)
+
+    p = sub.add_parser("export", help="print a session as markdown")
+    p.add_argument("session", metavar="<session>|<store>:<path>")
+    p.add_argument("--tools", action="store_true",
+                   help="include tool calls and their results")
+    p.add_argument("--media", metavar="<dir>",
+                   help="write images there and link them")
+    p.add_argument("--raw", action="store_true",
+                   help="the transcript exactly as it is")
+    p.set_defaults(func=cmd_export)
 
     p = sub.add_parser("list", help="what a store holds, or the stores")
     p.add_argument("ref", nargs="?", metavar="<store>[:<path>]")

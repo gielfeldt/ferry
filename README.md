@@ -65,6 +65,7 @@ ferry load <store>:<path> [--force]
 ferry load --memory <store>:<dir> [--force]
 ferry move <store>:<path> <store>:<dir> [--force]
 ferry move --memory <store>:<dir> <store>:<dir> [--force]
+ferry export <session>|<store>:<path> [--tools] [--media <dir>] [--raw]
 ferry list [<store>[:<path>]]
 ferry list --memory [<store>[:<dir>]]
 ferry update [<store>]
@@ -87,6 +88,10 @@ ferry list --memory work:acme                 # the notes in one folder
 ferry load work:acme/bug-hunt                 # a session
 ferry load --memory work:acme                 # that folder's memory
 ferry update work                             # pull, and explain a divergence
+
+ferry export bug-hunt                         # read it, as markdown
+ferry export work:acme/bug-hunt --tools       # with what the tools did
+ferry export bug-hunt --raw > bug-hunt.jsonl  # the transcript itself
 
 ferry move work:acme/bug-hunt work:archive    # -> archive/bug-hunt.jsonl
 ferry move --memory work:acme work:acme-v2    # -> acme-v2/memory
@@ -122,6 +127,17 @@ rename, `/rename` the session and save it again.
 **`--memory` says which of the two you mean, everywhere.** A store keeps
 sessions and memory in separate trees, so nothing has to be inferred from a
 path — and a session may be called `memory` like anything else.
+
+**`export` reads from either side.** Every other command goes one way — `save`
+out of here, `load` into here — so which end a ref names is never in doubt.
+Reading is the same question wherever the conversation sits, so `export` takes
+a local name or a `store:path`, and a colon says which.
+
+What it prints is the conversation: what you asked, what Claude answered, and
+one line per tool call. That is about 1% of a transcript — a 17.9 MB session
+comes out as 95 KB — because tool results are the bulk of any real session.
+`--tools` puts them back, in full. Images cannot go in the text at all, so
+they are noted where they appeared, and written out beside it with `--media`.
 
 **A store is a plain git repo.** ferry only fast-forwards; it never merges.
 

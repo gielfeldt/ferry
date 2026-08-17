@@ -9,6 +9,7 @@ Worked examples. Each one stands alone; skip to the situation you are in.
 - [Share a directory's memory](#share-a-directorys-memory)
 - [Keep work and personal apart](#keep-work-and-personal-apart)
 - [See what a store holds without changing anything](#see-what-a-store-holds-without-changing-anything)
+- [Read a session](#read-a-session)
 - [Rename a session](#rename-a-session)
 - [Reorganise a store](#reorganise-a-store)
 - [Upgrading a store from before 1.2](#upgrading-a-store-from-before-12)
@@ -174,6 +175,42 @@ says so:
 ```
   2 commit(s) waiting on the remote - ferry update work
 ```
+
+## Read a session
+
+Without resuming it, and without hunting for the file:
+
+```sh
+ferry export bug-hunt | less
+ferry export work:acme/bug-hunt              # straight out of the store
+```
+
+You get the conversation as markdown — prompts, replies, and a line per tool
+call. Tool results are left out, which is most of the file: a 17.9 MB session
+prints as 95 KB. When you need to see what actually ran:
+
+```sh
+ferry export bug-hunt --tools | less
+```
+
+Images are noted where they appeared. To look at them, write them out:
+
+```sh
+ferry export bug-hunt --media media > bug-hunt.md
+```
+
+which leaves `bug-hunt.md` linking `media/*.jpeg`, so any markdown viewer
+shows them in place.
+
+And when you want the file itself rather than a reading of it:
+
+```sh
+ferry export bug-hunt --raw > bug-hunt.jsonl
+```
+
+That is byte-for-byte the transcript. From a store it is the decrypted
+transcript, which is the one place store contents leave the store in the
+clear - fine on your own machine, worth knowing before piping it anywhere.
 
 ## Rename a session
 

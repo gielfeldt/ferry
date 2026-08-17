@@ -136,6 +136,89 @@ class NoteDescription(unittest.TestCase):
         self.assertEqual(f.note_description(Path("/nonexistent/x.md")), "")
 
 
+class Export(unittest.TestCase):
+    """Rendering a transcript as markdown. What it leaves out matters as much
+    as what it keeps: tool results are most of a real session's bytes."""
+
+    def transcript(self, *records):
+        import json as _json
+        return tmpfile("".join(_json.dumps(r) + "\n" for r in records))
+
+    def render(self, jsonl, **kw):
+        buf = io.StringIO()
+        f.render_markdown(jsonl, out=buf, **kw)
+        return buf.getvalue()
+
+    def conversation(self):
+        return self.transcript(
+            {"type": "custom-title", "customTitle": "bug-hunt",
+             "sessionId": "abc-123"},
+            {"type": "user", "timestamp": "2026-08-13T12:34:50Z",
+             "message": {"role": "user", "content": "why is it slow?"}},
+            {"type": "user", "timestamp": "2026-08-13T12:34:51Z",
+             "message": {"role": "user", "content": "<system-reminder>noise"}},
+            {"type": "assistant", "timestamp": "2026-08-13T12:35:00Z",
+             "message": {"role": "assistant", "content": [
+                 {"type": "thinking", "thinking": "hmm"},
+                 {"type": "text", "text": "Let me look."},
+                 {"type": "tool_use", "name": "Bash",
+                  "input": {"command": "git status"}}]}},
+            {"type": "user", "timestamp": "2026-08-13T12:35:01Z",
+             "message": {"role": "user", "content": [
+                 {"type": "tool_result", "content": "M ferry"}]}},
+            {"type": "attachment", "attachment": {"type": "task_reminder"}})
+
+    def test_the_conversation_is_what_you_get(self):
+        got = self.render(self.conversation())
+        self.assertIn("# bug-hunt", got)
+        self.assertIn("why is it slow?", got)
+        self.assertIn("Let me look.", got)
+
+    def test_the_id_comes_from_inside_the_file(self):
+        """In a store the filename is the name, so the stem is not the id."""
+        self.assertIn("abc-123", self.render(self.conversation()))
+
+    def test_what_is_left_out_by_default(self):
+        got = self.render(self.conversation())
+        self.assertNotIn("M ferry", got)        # tool results: most of the bytes
+        self.assertNotIn("hmm", got)            # thinking
+        self.assertNotIn("system-reminder", got)  # injected context
+        self.assertNotIn("task_reminder", got)  # Claude Code's own bookkeeping
+
+    def test_a_tool_call_still_shows_that_it_happened(self):
+        self.assertIn("git status", self.render(self.conversation()))
+
+    def test_tools_brings_the_results_back(self):
+        got = self.render(self.conversation(), tools=True)
+        self.assertIn("M ferry", got)
+
+    def test_an_image_is_noted_where_it_appeared(self):
+        t = self.transcript({"type": "user", "message": {"role": "user",
+            "content": [{"type": "image", "source": {
+                "type": "base64", "media_type": "image/jpeg",
+                "data": "/9j/" + "A" * 4000}}]}})
+        self.assertIn("[image", self.render(t))
+
+    def test_media_writes_the_image_out_and_links_it(self):
+        import base64 as _b64
+        png = _b64.b64encode(b"\x89PNG\r\n\x1a\n" + b"x" * 40).decode()
+        t = self.transcript({"type": "user", "message": {"role": "user",
+            "content": [{"type": "image", "source": {
+                "type": "base64", "media_type": "image/png", "data": png}}]}})
+        d = Path(tempfile.mkdtemp()) / "media"
+        got = self.render(t, media=d)
+        written = sorted(d.glob("*.png"))
+        self.assertEqual(len(written), 1)
+        self.assertTrue(written[0].read_bytes().startswith(b"\x89PNG"))
+        self.assertIn(f"media/{written[0].name}", got)
+
+    def test_a_fence_survives_backticks_in_the_content(self):
+        """A tool result full of markdown must not break out of its block."""
+        out = f.fenced("here is ``` a fence")
+        self.assertIn("````", out)
+        self.assertTrue(out.strip().startswith("````"))
+
+
 class Layout(unittest.TestCase):
     """A store keeps sessions and memory in two trees. Nothing about that
     reaches the command line, so the mapping is the whole of it."""
