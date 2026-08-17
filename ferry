@@ -738,39 +738,78 @@ def fenced(text, lang=""):
     return f"\n{fence}{lang}\n{text}\n{fence}\n"
 
 
-def memory_source(ref):
-    """The memory directory a ref names: here, in a store, or elsewhere.
+def find_note(mem, name):
+    """A note by name, with or without the .md - as sessions drop the .jsonl."""
+    for candidate in (name, name + ".md"):
+        p = mem / candidate
+        if p.is_file() and p.parent == mem:
+            return p
+    return None
 
-    The same three forms a session takes, minus the name - memory belongs to a
-    directory, so the directory is the whole of the ref.
+
+def memory_source(ref):
+    """What a memory ref names: a directory of notes, or one of them.
+
+        ~/develop/acme                  every note there
+        ~/develop/acme:role             just that one
+        work:acme                       the store's copy of them
+        work:acme/role                  one of those
+
+    The shape a session ref has, with a note where the session name goes. The
+    separator differs for the same reason it does there: a path already has
+    slashes in it, so the colon is what marks where the path stopped.
+
+    Returns (directory, note or None).
     """
     if ":" in ref:
         head, _, tail = ref.partition(":")
         if head in repos():
+            repo = repo_dir(head)
             alias, path = split_ref(ref, directory=True)
-            mem = repo_dir(alias) / in_store(path, memory=True)
-            if not mem.is_dir():
-                die(f"no memory at {ref}")
-            return mem
-        ref = head if not tail else ref
-    where = Path(os.path.expanduser(ref))
+            mem = repo / in_store(path, memory=True)
+            if mem.is_dir():
+                return mem, None
+            parent, _, leaf = path.rpartition("/")
+            mem = repo / in_store(parent, memory=True)
+            note = find_note(mem, leaf) if mem.is_dir() else None
+            if note:
+                return mem, note
+            die(f"no memory at {ref}")
+        where, wanted = Path(os.path.expanduser(head)), tail
+    else:
+        where, wanted = Path(os.path.expanduser(ref)), None
+
     if not where.is_dir():
-        die(f"no such directory: {ref}\n"
+        die(f"no such directory: {where}\n"
             f"       for a store, ferry knows: "
             f"{', '.join(sorted(repos())) or 'none yet'}")
     mem = slug_dir(where) / "memory"
     if not mem.is_dir() or not any(mem.glob("*.md")):
         die(f"no memory for {where}")
-    return mem
+    if not wanted:
+        return mem, None
+    note = find_note(mem, wanted)
+    if not note:
+        die(f"no note called '{wanted}' in {where}.  Try:  ferry memory {where}")
+    return mem, note
 
 
-def render_memory(mem, out=sys.stdout):
-    """A directory's memory as one document.
+def render_memory(mem, out=sys.stdout, note=None):
+    """A directory's memory as one document, or one note of it.
 
     The notes are markdown already, so this is mostly a matter of putting them
     in order and saying where each began. Frontmatter is turned into the
     heading it was describing rather than printed as itself.
     """
+    if note is not None:
+        out.write(f"# {note.name}\n")
+        desc = note_description(note)
+        body = strip_frontmatter(note.read_text(errors="replace"))
+        if desc and desc not in body:
+            out.write(f"\n*{desc}*\n")
+        out.write("\n" + body.strip() + "\n")
+        return
+
     notes = sorted(p for p in mem.glob("*.md") if p.name != "MEMORY.md")
     index = mem / "MEMORY.md"
     out.write(f"# memory\n\n*{len(notes)} note(s)*\n")
@@ -802,7 +841,8 @@ def cmd_export(args):
         if args.raw or args.tools or args.media:
             die("--memory is a directory of notes, so --raw, --tools and "
                 "--media have nothing to do there")
-        return render_memory(memory_source(args.session))
+        mem, note = memory_source(args.session)
+        return render_memory(mem, note=note)
 
     src = export_source(args.session)
     if args.raw:
@@ -1031,6 +1071,12 @@ def refs_in(where, everything=False):
     return out
 
 
+def notes_in(mem):
+    """The notes in a memory directory, named as you would type them - without
+    the .md, as a session is named without its .jsonl."""
+    return sorted(p.stem for p in mem.glob("*.md")) if mem.is_dir() else []
+
+
 def dir_refs(everything=False):
     """`<dir>:` for every directory a ref could reach into, ready for a name.
 
@@ -1174,10 +1220,31 @@ def cmd_complete(args):
                     out.append("to")
         elif cmd == "export":
             if len(prev) == 2 and given(words, "--memory", "-m"):
-                # A directory of notes, so the same places `ferry memory` and
-                # `list --memory` know about - never a session name.
-                out = [c for c in sorted(tilde(d) for d in memory_dirs())
-                       + store_refs(cur, "memory") if c.startswith(cur)]
+                head, sep, tail = cur.partition(":")
+                if sep and head in repos():
+                    # In a store: a folder of notes, or a note in one.
+                    repo, path = repo_dir(head), tail.strip("/")
+                    parent, _, leaf = path.rpartition("/")
+                    base = repo / in_store(parent, memory=True)
+                    if "/" in path and base.is_dir():
+                        out = [f"{head}:{parent}/{n}" for n in notes_in(base)
+                               if n.startswith(leaf)]
+                    else:
+                        out = store_refs(cur, "memory")
+                        folder = repo / in_store(path, memory=True)
+                        if folder.is_dir():
+                            out += [f"{head}:{path}/{n}"
+                                    for n in notes_in(folder)]
+                elif sep:
+                    # A note in that directory - the memory ref's equivalent of
+                    # naming a session.
+                    mem = slug_dir(Path(os.path.expanduser(head))) / "memory"
+                    out = [f"{head}:{n}" for n in notes_in(mem)
+                           if n.startswith(tail)]
+                else:
+                    out = sorted(tilde(d) for d in memory_dirs()) \
+                        + store_refs(cur, "memory")
+                out = [c for c in out if c.startswith(cur)]
                 if not out and (cur.startswith(("~", "/", ".")) or "/" in cur):
                     sys.exit(FILES)
             elif len(prev) == 2:
@@ -1492,7 +1559,7 @@ USAGE = """\
   ferry list --memory [<store>[:<dir>]]
   ferry export <session>|<store>:<path>|<dir>:<session>
                [--tools] [--media <dir>] [--raw] [--all]
-  ferry export --memory <dir>|<store>:<dir>
+  ferry export --memory <dir>[:<note>]|<store>:<dir>[/<note>]
   ferry update [<store>]\
 """
 
@@ -1527,6 +1594,7 @@ examples:
     ferry export work:acme/bug-hunt --tools       with what the tools did
     ferry export ~/develop/acme:bug-hunt          one in another directory
     ferry export --memory work:acme               a folder's notes, in full
+    ferry export --memory work:acme/role          just the one note
     ferry export bug-hunt --raw > bug-hunt.jsonl  the transcript itself
 
   tidy the store up

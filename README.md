@@ -83,7 +83,7 @@ ferry move <store>:<path> <store>:<dir> [--force]
 ferry move --memory <store>:<dir> <store>:<dir> [--force]
 ferry export <session>|<store>:<path>|<dir>:<session>
              [--tools] [--media <dir>] [--raw] [--all]
-ferry export --memory <dir>|<store>:<dir>
+ferry export --memory <dir>[:<note>]|<store>:<dir>[/<note>]
 ferry list [<store>[:<path>]]
 ferry list --memory [<store>[:<dir>]]
 ferry update [<store>]
@@ -114,6 +114,7 @@ ferry update work                             # pull, and explain a divergence
 
 ferry export bug-hunt                         # read it, as markdown
 ferry export --memory work:acme               # a folder's notes, in full
+ferry export --memory work:acme/role          # just the one note
 ferry export work:acme/bug-hunt --tools       # with what the tools did
 ferry export bug-hunt --raw > bug-hunt.jsonl  # the transcript itself
 
@@ -158,8 +159,10 @@ which is the whole of it, with nothing after the colon:
 ferry memory                          # notes here
 ferry memory ~/develop/acme           # notes there
 ferry memory --global                 # every directory that remembers anything
-ferry export --memory ~/develop/acme  # those notes in full, as one document
-ferry export --memory work:acme       # or from a store, without loading them
+ferry export --memory ~/develop/acme       # those notes, as one document
+ferry export --memory ~/develop/acme:role  # or just one of them
+ferry export --memory work:acme            # from a store, without loading it
+ferry export --memory work:acme/role
 ```
 
 **`--memory` says which of the two you mean, everywhere.** A store keeps

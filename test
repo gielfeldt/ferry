@@ -344,6 +344,48 @@ class SessionDirs(unittest.TestCase):
         self.assertEqual(f.tilde(str(Path.home() / "x")), "~/x")
 
 
+class MemoryRef(unittest.TestCase):
+    """A memory ref names a directory, and may name one note in it."""
+
+    def setUp(self):
+        self.store = Path(tempfile.mkdtemp())
+        mem = self.store / "memories" / "acme"
+        mem.mkdir(parents=True)
+        (mem / "role.md").write_text("---\ndescription: who\n---\n\nbody\n")
+        (mem / "MEMORY.md").write_text("- [Role](role.md) - who\n")
+        self.saved = f.repos
+        f.repos = lambda: {"work": {"path": str(self.store)}}
+
+    def tearDown(self):
+        f.repos = self.saved
+
+    def test_a_store_folder_is_all_of_its_notes(self):
+        mem, note = f.memory_source("work:acme")
+        self.assertEqual(mem, self.store / "memories" / "acme")
+        self.assertIsNone(note)
+
+    def test_a_note_can_be_named_after_the_folder(self):
+        mem, note = f.memory_source("work:acme/role")
+        self.assertEqual(note.name, "role.md")
+
+    def test_the_extension_is_optional(self):
+        self.assertEqual(f.memory_source("work:acme/role.md")[1].name, "role.md")
+
+    def test_a_note_that_is_not_there_says_so(self):
+        with quiet(), self.assertRaises(SystemExit):
+            f.memory_source("work:acme/nope")
+
+    def test_one_note_renders_alone(self):
+        mem, note = f.memory_source("work:acme/role")
+        buf = io.StringIO()
+        f.render_memory(mem, out=buf, note=note)
+        got = buf.getvalue()
+        self.assertIn("# role.md", got)
+        self.assertIn("body", got)
+        self.assertNotIn("MEMORY.md", got)   # just the one asked for
+        self.assertNotIn("description:", got)  # frontmatter became the heading
+
+
 class ExportRef(unittest.TestCase):
     """Three ways to name a session, and one rule for telling them apart."""
 
@@ -1021,6 +1063,16 @@ class Completion(unittest.TestCase):
         self.assertIn(f.tilde(str(Path.cwd())), got)     # and this directory
         self.assertEqual(self.complete_line("ferry export -m work:"),
                          ["work:acme"])                  # then its memory
+
+    def test_a_memory_ref_can_name_one_note(self):
+        """The same shape a session ref has, with a note where the name goes."""
+        got = self.complete_line("ferry export -m work:acme/")
+        self.assertEqual(got, ["work:acme/note"])       # without the .md
+
+    def test_a_local_memory_ref_names_a_note_after_the_colon(self):
+        here = f.tilde(str(Path.cwd()))
+        self.assertEqual(self.complete_line(f"ferry export -m {here}:"),
+                         [f"{here}:a-note"])
 
     def test_export_memory_never_offers_a_session(self):
         self.assertNotIn("bug-hunt", self.complete_line("ferry export -m "))
