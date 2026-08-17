@@ -57,7 +57,7 @@ accident.
 ```
 ferry add <name> <git-url> [--key <file>] [--path <dir>]
 ferry stores
-ferry sessions [--global]
+ferry sessions [--global] [--all]
 ferry memory
 ferry save <session> [to] <store>:<dir> [--force]
 ferry save --memory [to] <store>:<dir> [--force]
@@ -65,7 +65,8 @@ ferry load <store>:<path> [--force]
 ferry load --memory <store>:<dir> [--force]
 ferry move <store>:<path> <store>:<dir> [--force]
 ferry move --memory <store>:<dir> <store>:<dir> [--force]
-ferry export <session>|<store>:<path>|<dir>:<session> [--tools] [--media <dir>] [--raw]
+ferry export <session>|<store>:<path>|<dir>:<session>
+             [--tools] [--media <dir>] [--raw] [--all]
 ferry list [<store>[:<path>]]
 ferry list --memory [<store>[:<dir>]]
 ferry update [<store>]
@@ -78,6 +79,7 @@ ferry stores
 
 ferry sessions                                # sessions in this directory
 ferry sessions --global                       # every named session, and where
+ferry sessions --all                          # unnamed ones too, listed by id
 ferry memory                                  # notes in this directory
 
 ferry save bug-hunt to work:acme              # -> acme/bug-hunt.jsonl
@@ -148,6 +150,13 @@ across the machine would eventually pick the wrong one without saying so.
 `ferry sessions --global` lists what there is, with a path for each that is
 checked to resolve, and `ferry export <TAB>` offers those directories
 alongside the local names and the stores.
+
+**A session with no name is not listed by default.** It cannot be named in a
+ref — `save` refuses it and `<dir>:<name>` has nothing to match — so listing it
+offers you something you cannot then act on, and completion would walk you into
+directories with nothing behind them. `--all` brings them back, addressed by
+their full id, which is the only handle they have. `ferry sessions` says how
+many are hiding.
 
 What it prints is the conversation: what you asked, what Claude answered, and
 one line per tool call. That is about 1% of a transcript — a 17.9 MB session

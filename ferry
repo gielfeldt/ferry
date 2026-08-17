@@ -946,24 +946,33 @@ NOTHING, FILES = 1, 2
 COMMANDS = {
     "add":      ["--key", "--path"],
     "stores":   [],
-    "sessions": ["--global"],
+    "sessions": ["--global", "--all"],
     "memory":   [],
     "save":     ["--memory", "--force", "--allow-plaintext"],
     "load":     ["--memory", "--force", "--name"],
     "move":     ["--memory", "--force"],
-    "export":   ["--tools", "--media", "--raw"],
+    "export":   ["--tools", "--media", "--raw", "--all"],
     "list":     ["--memory"],
     "update":   [],
 }
 
 
-def dir_refs():
-    """`<dir>:` for every directory that has sessions, ready for a name.
+def refs_in(where, everything=False):
+    """What can be typed to reach a session in `where`: its name, or with
+    --all the id of one that has none."""
+    out = set(names_here(where))
+    if everything and where.is_dir():
+        out.update(f.stem for f in where.glob("*.jsonl") if not session_name(f))
+    return out
+
+
+def dir_refs(everything=False):
+    """`<dir>:` for every directory a ref could reach into, ready for a name.
 
     Offered with the colon already there, the way stores are - what follows is
     a session, and the colon is what says so.
     """
-    return sorted({tilde(d) + ":" for d in session_dirs()})
+    return sorted({tilde(d) + ":" for d in session_dirs(everything)})
 
 
 def store_refs(prefix, kind="any"):
@@ -1075,25 +1084,26 @@ def cmd_complete(args):
                     out.append("to")
         elif cmd == "export":
             if len(prev) == 2:
+                everything = "--all" in words
                 head, sep, tail = cur.partition(":")
                 if sep and head not in repos():
                     # A directory ref: the sessions in that directory are the
                     # answers, and only ferry knows their names.
                     where = Path(os.path.expanduser(head))
                     out = [f"{head}:{n}"
-                           for n in sorted(names_here(slug_dir(where)))
+                           for n in sorted(refs_in(slug_dir(where), everything))
                            if n.startswith(tail)] if where.is_dir() else []
                 elif not sep and (cur.startswith(("~", "/", ".")) or "/" in cur):
                     # A path is being typed. Offer the directories that have
                     # sessions in them; if none match, it is an ordinary path
                     # and the shell can finish it.
-                    out = [d for d in dir_refs() if d.startswith(cur)]
+                    out = [d for d in dir_refs(everything) if d.startswith(cur)]
                     if not out:
                         sys.exit(FILES)
                 else:
-                    out = sorted(n for n in names_here(slug_dir())
+                    out = sorted(n for n in refs_in(slug_dir(), everything)
                                  if n.startswith(cur)) \
-                        + store_refs(cur, "session") + dir_refs()
+                        + store_refs(cur, "session") + dir_refs(everything)
         elif cmd == "move":
             # source takes what --memory says it takes; the destination is
             # always a folder to put it in
@@ -1210,20 +1220,23 @@ def session_cwd(jsonl):
     return from_slug(want)
 
 
-def session_dirs():
-    """Every directory on this machine that has sessions, as real paths.
+def session_dirs(everything=False):
+    """Directories holding something a ref could name, as real paths.
 
-    One file per directory is enough to learn the path, and only its head is
-    read, so this stays quick enough to sit behind a TAB - unlike naming the
-    sessions themselves, which means reading each transcript to the end.
+    Not every directory with a transcript in it: one whose sessions are all
+    unnamed has nothing `<dir>:<name>` can match, so offering it leads you
+    somewhere with nothing behind it. With --all an id is a handle, so then
+    they count.
     """
     out = []
     if CLAUDE_PROJECTS.is_dir():
         for d in sorted(CLAUDE_PROJECTS.iterdir()):
             if not d.is_dir():
                 continue
-            first = next(iter(sorted(d.glob("*.jsonl"))), None)
-            where = session_cwd(first) if first else from_slug(d.name)
+            files = sorted(d.glob("*.jsonl"))
+            if not files or not (everything or any(session_name(f) for f in files)):
+                continue
+            where = session_cwd(files[0])
             # A directory that has since been deleted would only be offered so
             # that `<dir>:<name>` could refuse it.
             if where and Path(where).is_dir():
@@ -1232,70 +1245,78 @@ def session_dirs():
 
 
 def cmd_sessions(args):
-    """What is in this directory, so you know what you can save.
+    """What can be referred to here, so you know what you can save or read.
 
-    Ids are printed in full, because the point of reading this list is usually
-    to paste one into `claude --resume`.
+    Named sessions only, unless --all. A session with no name cannot be named
+    in a ref at all - `ferry save` refuses it, and `<dir>:<name>` has nothing
+    to match - so listing it by default was showing you things you could not
+    then do anything with. --all brings them back, addressed by id, which is
+    the only handle they have.
     """
-    if getattr(args, "global_", False):
-        return sessions_everywhere()
+    if args.global_:
+        return sessions_everywhere(args.all)
+
     here = slug_dir()
-    if not here.is_dir():
-        print(f"no sessions for {Path.cwd()}")
-        return
-    rows = []
-    for f in here.glob("*.jsonl"):
-        # The name you gave it if it has one; otherwise the title Claude made
-        # up, marked with * so the two are never confused - only the unmarked
-        # ones can be used as a name in `ferry save`.
-        name = session_name(f) or ""
+    rows, unnamed = [], 0
+    for f in sorted(here.glob("*.jsonl")) if here.is_dir() else []:
+        name = session_name(f)
         if not name:
-            hint = ai_title(f) or first_prompt(f)
-            if hint and len(hint) > 72:
-                hint = hint[:71] + "\u2026"
-            name = f"* {hint}" if hint else ""
+            unnamed += 1
+            if not args.all:
+                continue
+            hint = ai_title(f) or first_prompt(f) or ""
+            name = "* " + (hint[:71] + "\u2026" if len(hint) > 72 else hint)
         rows.append((f.stat().st_mtime, f.stem, f.stat().st_size, name))
+
     if not rows:
-        print(f"no sessions for {Path.cwd()}")
+        print(f"no {'' if args.all else 'named '}sessions for {Path.cwd()}")
     for mtime, sid, size, name in sorted(rows, reverse=True):
         when = datetime.fromtimestamp(mtime).strftime("%Y-%m-%d")
         print(f"  {sid}  {when}  {size/1e6:6.1f} MB  {name}")
+
     n = len(list((here / "memory").glob("*.md"))) if (here / "memory").is_dir() else 0
     if n:
         print(f"  {'memory':<36}  {'':10}  {n:6} md   "
               f"(ferry save --memory to <store>:<dir>)")
-    if any(r[3].startswith("* ") for r in rows):
+    if unnamed and not args.all:
+        print(f"\n  {unnamed} unnamed - ferry sessions --all")
+    elif any(r[3].startswith("* ") for r in rows):
         print("\n  * a title or opening line, not a name - "
               "/rename it before saving")
 
 
-def sessions_everywhere():
-    """Every named session on this machine, and where each one belongs.
+def sessions_everywhere(everything=False):
+    """Every session on this machine, and the directory each belongs to.
 
-    Only the named ones: an unnamed session cannot be referred to, and the
-    point of this list is to give you something to type. The directory is what
-    makes that possible - names are unique within a directory and nowhere
-    wider, so `<dir>:<name>` is the form that always means one session.
+    The directory is what makes a ref possible: names are unique within one and
+    nowhere wider, so `<dir>:<name>` is the form that always means exactly one
+    session. Unnamed ones are listed under --all by their full id, which is the
+    only thing that can stand in for a name.
     """
     rows = []
-    root = CLAUDE_PROJECTS
-    if root.is_dir():
-        for d in sorted(root.iterdir()):
+    if CLAUDE_PROJECTS.is_dir():
+        for d in sorted(CLAUDE_PROJECTS.iterdir()):
             if not d.is_dir():
                 continue
+            where = None
             for f in sorted(d.glob("*.jsonl")):
                 name = session_name(f)
-                if name:
+                if not name:
+                    if not everything:
+                        continue
+                    name = f.stem
+                where = where or session_cwd(f)
+                if where and Path(where).is_dir():
                     rows.append((f.stat().st_mtime, name, f.stat().st_size,
-                                 session_cwd(f) or f"({d.name})"))
+                                 where))
     if not rows:
-        print("no named sessions on this machine")
+        print(f"no {'' if everything else 'named '}sessions on this machine")
         return
-    width = min(max(len(r[1]) for r in rows), 30)
+    width = min(max(len(r[1]) for r in rows), 36)
     for mtime, name, size, where in sorted(rows, reverse=True):
         when = datetime.fromtimestamp(mtime).strftime("%Y-%m-%d")
         print(f"  {name:<{width}}  {when}  {size/1e6:6.1f} MB  {tilde(where)}")
-    print(f"\n  read one with:  ferry export <dir>:<name>")
+    print("\n  read one with:  ferry export <dir>:<name>")
 
 
 def tilde(path):
@@ -1307,7 +1328,7 @@ def tilde(path):
 USAGE = """\
   ferry add <name> <git-url> [--key <file>] [--path <dir>]
   ferry stores
-  ferry sessions [--global]
+  ferry sessions [--global] [--all]
   ferry memory
   ferry save <session> [to] <store>:<dir> [--force]
   ferry save --memory [to] <store>:<dir> [--force]
@@ -1318,7 +1339,7 @@ USAGE = """\
   ferry list [<store>[:<path>]]           without a store, same as `stores`
   ferry list --memory [<store>[:<dir>]]
   ferry export <session>|<store>:<path>|<dir>:<session>
-               [--tools] [--media <dir>] [--raw]
+               [--tools] [--media <dir>] [--raw] [--all]
   ferry update [<store>]\
 """
 
@@ -1332,6 +1353,7 @@ examples:
   what have I got here
     ferry sessions
     ferry sessions --global                       everywhere, and where each is
+    ferry sessions --all                          unnamed ones too, by id
     ferry memory
 
   send it
@@ -1387,6 +1409,8 @@ def main():
     p = sub.add_parser("sessions", help="sessions in this directory")
     p.add_argument("--global", dest="global_", action="store_true",
                    help="every named session on this machine, and where")
+    p.add_argument("--all", action="store_true",
+                   help="include unnamed sessions, listed by id")
     p.set_defaults(func=cmd_sessions)
 
     p = sub.add_parser("memory", help="what this directory remembers")
@@ -1429,6 +1453,8 @@ def main():
                    help="write images there and link them")
     p.add_argument("--raw", action="store_true",
                    help="the transcript exactly as it is")
+    p.add_argument("--all", action="store_true",
+                   help="complete unnamed sessions too, by id")
     p.set_defaults(func=cmd_export)
 
     p = sub.add_parser("list", help="what a store holds, or the stores")

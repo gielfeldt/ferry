@@ -278,11 +278,12 @@ class SessionDirs(unittest.TestCase):
         self.projects = Path(tempfile.mkdtemp())
         self.old, f.CLAUDE_PROJECTS = f.CLAUDE_PROJECTS, self.projects
         self.live = Path(tempfile.mkdtemp()).resolve()
-        for where, gone in ((self.live, False), (self.live / "vanished", True)):
+        for where in (self.live, self.live / "vanished"):
             d = self.projects / f.slug_dir(where).name
             d.mkdir(parents=True)
-            (d / "a.jsonl").write_text(_json.dumps(
-                {"type": "user", "cwd": str(where)}) + "\n")
+            (d / "a.jsonl").write_text("".join(_json.dumps(r) + "\n" for r in (
+                {"type": "custom-title", "customTitle": "named", "sessionId": "a"},
+                {"type": "user", "cwd": str(where)})))
         # the second directory was deleted after its sessions were recorded
 
     def tearDown(self):
@@ -290,6 +291,29 @@ class SessionDirs(unittest.TestCase):
 
     def test_a_directory_that_still_exists_is_offered(self):
         self.assertIn(str(self.live), f.session_dirs())
+
+    def test_a_directory_with_no_named_session_is_not_offered(self):
+        """Completing into it would land you somewhere with nothing behind
+        it - the whole point of the ref is a name to match."""
+        import json as _json
+        bare = Path(tempfile.mkdtemp()).resolve()
+        d = self.projects / f.slug_dir(bare).name
+        d.mkdir(parents=True)
+        (d / "u.jsonl").write_text(_json.dumps(
+            {"type": "user", "cwd": str(bare)}) + "\n")
+        self.assertNotIn(str(bare), f.session_dirs())
+        self.assertIn(str(bare), f.session_dirs(everything=True))
+
+    def test_all_offers_the_id_as_the_handle(self):
+        """An unnamed session has no name to type, so its id stands in."""
+        import json as _json
+        bare = Path(tempfile.mkdtemp()).resolve()
+        d = self.projects / f.slug_dir(bare).name
+        d.mkdir(parents=True)
+        (d / "deadbeef.jsonl").write_text(_json.dumps(
+            {"type": "user", "cwd": str(bare)}) + "\n")
+        self.assertEqual(f.refs_in(d), set())
+        self.assertEqual(f.refs_in(d, everything=True), {"deadbeef"})
 
     def test_one_that_is_gone_is_not(self):
         """It could only be offered so that <dir>:<name> could refuse it."""
