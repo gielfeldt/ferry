@@ -3,7 +3,7 @@
 #
 #   FERRY_REPO    owner/name to install from  (default gielfeldt/ferry)
 #   FERRY_PREFIX  where to put it             (default ~/.local/bin)
-#   FERRY_REF     a tag or branch             (default: latest release, else main)
+#   FERRY_REF     a release tag               (default: the newest release)
 set -eu
 
 REPO="${FERRY_REPO:-gielfeldt/ferry}"
@@ -22,47 +22,40 @@ _get() {                          # _get <dest> <url>
     fi
 }
 
-# Which version to install, decided once, before anything is fetched.
+# Which version to install, settled once, before anything is fetched.
 #
-# Resolving it per file is the thing to avoid: three separate lookups of
-# "latest" can straddle a release and give you one version's binary with
-# another's completions, and a fallback to main on any single failure quietly
-# does the same. So the ref is settled here, and every file then comes from
-# it - a release is a version of ferry, not of one file at a time.
-resolve_ref() {
-    [ -n "$REF" ] && { echo "$REF"; return 0; }
-    _t="$(mktemp)"
-    # Both the API and the /releases/latest redirect settle after a release
-    # rather than at it, but the API settles in seconds where the redirect can
-    # take a minute or two - so ask the API. Either way, what matters here is
-    # that one answer is used for every file.
-    if _get "$_t" "https://api.github.com/repos/$REPO/releases/latest"; then
-        _tag="$(sed -n 's/.*"tag_name" *: *"\([^"]*\)".*/\1/p' "$_t" | head -1)"
-        [ -n "$_tag" ] && { rm -f "$_t"; echo "$_tag"; return 0; }
+# Everything then comes from that one tag. Resolving per file is the thing to
+# avoid: separate lookups can straddle a release and pair one version's binary
+# with another's completions. There is no fallback to a branch, deliberately -
+# a fallback that quietly hands you something other than the release you asked
+# for is worse than stopping, and the install script piped from main is not
+# the same script that shipped with an older tag anyway.
+if [ -z "$REF" ]; then
+    ref_tmp="$(mktemp)"
+    # Asked once, to turn "no version given" into a concrete tag. This is the
+    # only mutable lookup in the script, and nothing is downloaded until it has
+    # produced an answer. It settles a few seconds after a release is
+    # published - sooner than the /releases/latest redirect, which takes a
+    # minute or two and is why nothing here uses it.
+    if _get "$ref_tmp" "https://api.github.com/repos/$REPO/releases/latest"; then
+        REF="$(sed -n 's/.*"tag_name" *: *"\([^"]*\)".*/\1/p' "$ref_tmp" |
+               head -1)"
     fi
-    rm -f "$_t"
-    return 0                      # no release at all: fall back to main
+    rm -f "$ref_tmp"
+fi
+[ -n "$REF" ] || {
+    echo "ferry: could not work out which release to install from $REPO" >&2
+    echo "       set one:  FERRY_REF=v1.2.6 sh install.sh" >&2
+    exit 1; }
+
+echo "installing ferry $REF"
+
+download() {                      # download <dest> <asset>
+    _get "$1" "https://github.com/$REPO/releases/download/$REF/$2"
 }
 
-REF="$(resolve_ref)"
-FROM="${REF:-main}"
-
-# Within one ref, the release asset and the tree at that same tag are the same
-# content, so falling back between them cannot mix versions. Releases before
-# 1.2.2 carry no completion assets, which is exactly what that fallback is for.
-download() {                      # download <dest> <asset> <path-in-tree>
-    if [ -n "$REF" ]; then
-        _get "$1" "https://github.com/$REPO/releases/download/$REF/$2" ||
-        _get "$1" "https://raw.githubusercontent.com/$REPO/$REF/$3"
-    else
-        _get "$1" "https://raw.githubusercontent.com/$REPO/main/$3"
-    fi
-}
-
-echo "installing ferry from $FROM"
-
-download "$tmp" ferry ferry || {
-    echo "ferry: nothing to download at $FROM in $REPO" >&2; exit 1; }
+download "$tmp" ferry || {
+    echo "ferry: $REF has no ferry to download in $REPO" >&2; exit 1; }
 
 # Never install something that will not run.
 python3 "$tmp" --version >/dev/null 2>&1 || {
@@ -82,7 +75,7 @@ BASHDIR="${XDG_DATA_HOME:-$HOME/.local/share}/bash-completion/completions"
 ZSHDIR="${XDG_DATA_HOME:-$HOME/.local/share}/zsh/site-functions"
 comp_tmp="$(mktemp)"
 
-if download "$comp_tmp" ferry.bash "completions/ferry.bash"; then
+if download "$comp_tmp" ferry.bash; then
     mkdir -p "$BASHDIR" && mv "$comp_tmp" "$BASHDIR/ferry" \
         && echo "  bash completion -> $BASHDIR/ferry"
     # That directory is only searched by bash-completion 2.x, which needs bash
@@ -98,7 +91,7 @@ if download "$comp_tmp" ferry.bash "completions/ferry.bash"; then
     fi
 fi
 comp_tmp="$(mktemp)"
-if download "$comp_tmp" ferry.zsh "completions/ferry.zsh"; then
+if download "$comp_tmp" ferry.zsh; then
     mkdir -p "$ZSHDIR" && mv "$comp_tmp" "$ZSHDIR/_ferry" \
         && echo "  zsh completion  -> $ZSHDIR/_ferry"
     case ":${fpath:-}:" in
