@@ -17,7 +17,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-__version__ = "1.2.0"
+__version__ = "1.2.1"
 
 CONFIG = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config") / "ferry"
 CONFIG_FILE = CONFIG / "repos.json"
@@ -682,6 +682,36 @@ def cmd_list(args):
     list_one(alias, path.strip("/"), args.memory)
 
 
+def written_dates(log):
+    """path -> the date it was last written, from one `git log --name-status`.
+
+    Renames are walked backwards: the log runs newest first, so when a rename
+    appears, everything older knows the file by its old name. Following them
+    here rather than asking git per file is the difference between one process
+    and one per session - and `git log --follow` is slow enough (rename
+    detection, every time) that it was most of what listing a store cost.
+
+    Pure lines-in, dict-out, so it can be tested without a repo.
+    """
+    dates, was = {}, {}      # path -> date ; historical name -> name today
+    date = ""
+    for line in log.splitlines():
+        if line.startswith("\0"):
+            date = line[1:].strip()
+            continue
+        parts = line.split("\t")
+        if len(parts) < 2:
+            continue
+        status = parts[0]
+        if status.startswith("R") and len(parts) == 3:
+            old, new = parts[1], parts[2]
+            was[old] = was.pop(new, new)
+        elif status[0] in "AM":
+            # setdefault: the walk is newest-first, so the first one wins
+            dates.setdefault(was.get(parts[1], parts[1]), date)
+    return dates
+
+
 def list_one(alias, path, memory):
     repo = repo_dir(alias)
     # Fetch but never merge. Listing has to see what another machine saved, yet
@@ -705,17 +735,17 @@ def list_one(alias, path, memory):
                 print(f"  {alias}:{rel:<40} "
                       f"{len(list(d.glob('*.md'))):6} note(s)")
     else:
-        for f in sorted(root.rglob("*.jsonl")):
+        sessions = sorted(root.rglob("*.jsonl"))
+        # One walk of the history for all of them, rather than one per file.
+        dates = written_dates(
+            git(repo, "log", "--format=%x00%ad", "--date=short",
+                "--name-status", "-M", check=False).stdout) if sessions else {}
+        for f in sessions:
             found = True
             disk = f.relative_to(repo).as_posix()
             rel = of_store(disk)[:-6]
-            # When the session was last *written*, not last touched: --follow
-            # crosses renames, and skipping R leaves out the move itself, so
-            # re-filing a session does not restamp it with today's date.
-            when = git(repo, "log", "--follow", "-1", "--format=%ad",
-                       "--date=short", "--diff-filter=MA", "--", disk,
-                       check=False).stdout.strip()
-            print(f"  {alias}:{rel:<40} {f.stat().st_size/1e6:6.1f} MB  {when}")
+            print(f"  {alias}:{rel:<40} {f.stat().st_size/1e6:6.1f} MB  "
+                  f"{dates.get(disk, '')}")
 
     if not found:
         print(f"  {shown} has no {'memory' if memory else 'sessions'}")

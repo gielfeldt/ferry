@@ -158,6 +158,50 @@ class Layout(unittest.TestCase):
         self.assertEqual(f.of_store("sessions/sessions/x"), "sessions/x")
 
 
+class WrittenDates(unittest.TestCase):
+    """The date column, read from one pass of `git log --name-status` rather
+    than a `git log --follow` per session - which is what made listing a store
+    take seconds, one visible line at a time."""
+
+    def log(self, *commits):
+        """(date, [status lines]) newest first, as git prints it."""
+        out = []
+        for date, lines in commits:
+            out.append("\0" + date)
+            out.extend(lines)
+        return "\n".join(out) + "\n"
+
+    def test_the_newest_write_wins(self):
+        got = f.written_dates(self.log(
+            ("2026-08-16", ["M\tsessions/acme/bug-hunt.jsonl"]),
+            ("2026-08-01", ["A\tsessions/acme/bug-hunt.jsonl"])))
+        self.assertEqual(got["sessions/acme/bug-hunt.jsonl"], "2026-08-16")
+
+    def test_a_rename_keeps_the_date_it_was_written(self):
+        """Migrating a store must not restamp every session with today."""
+        got = f.written_dates(self.log(
+            ("2026-08-17", ["R100\tacme/bug-hunt.jsonl\t"
+                            "sessions/acme/bug-hunt.jsonl"]),
+            ("2026-08-16", ["M\tacme/bug-hunt.jsonl"])))
+        self.assertEqual(got, {"sessions/acme/bug-hunt.jsonl": "2026-08-16"})
+
+    def test_renames_chain(self):
+        got = f.written_dates(self.log(
+            ("2026-08-17", ["R100\tb.jsonl\tc.jsonl"]),
+            ("2026-08-10", ["R100\ta.jsonl\tb.jsonl"]),
+            ("2026-08-01", ["A\ta.jsonl"])))
+        self.assertEqual(got, {"c.jsonl": "2026-08-01"})
+
+    def test_several_files_in_one_commit(self):
+        got = f.written_dates(self.log(
+            ("2026-08-16", ["A\tone.jsonl", "A\ttwo.jsonl"])))
+        self.assertEqual(got, {"one.jsonl": "2026-08-16",
+                               "two.jsonl": "2026-08-16"})
+
+    def test_an_empty_log_is_empty(self):
+        self.assertEqual(f.written_dates(""), {})
+
+
 class PrintNotes(unittest.TestCase):
     """One printer for both `memory` here and `list` in a store, so a memory
     folder reads the same either way."""
