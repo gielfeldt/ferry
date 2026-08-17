@@ -269,6 +269,41 @@ class WhichDirectory(unittest.TestCase):
         self.assertEqual(f.session_cwd(d / "abc.jsonl"), str(started))
 
 
+class SessionDirs(unittest.TestCase):
+    """`ferry export <TAB>` offers the directories that have sessions, so the
+    <dir>:<name> form is discoverable rather than something you must know."""
+
+    def setUp(self):
+        import json as _json
+        self.projects = Path(tempfile.mkdtemp())
+        self.old, f.CLAUDE_PROJECTS = f.CLAUDE_PROJECTS, self.projects
+        self.live = Path(tempfile.mkdtemp()).resolve()
+        for where, gone in ((self.live, False), (self.live / "vanished", True)):
+            d = self.projects / f.slug_dir(where).name
+            d.mkdir(parents=True)
+            (d / "a.jsonl").write_text(_json.dumps(
+                {"type": "user", "cwd": str(where)}) + "\n")
+        # the second directory was deleted after its sessions were recorded
+
+    def tearDown(self):
+        f.CLAUDE_PROJECTS = self.old
+
+    def test_a_directory_that_still_exists_is_offered(self):
+        self.assertIn(str(self.live), f.session_dirs())
+
+    def test_one_that_is_gone_is_not(self):
+        """It could only be offered so that <dir>:<name> could refuse it."""
+        self.assertNotIn(str(self.live / "vanished"), f.session_dirs())
+
+    def test_the_colon_comes_with_it(self):
+        """As it does for a store: what follows is a session, and the colon is
+        what says so."""
+        self.assertTrue(all(r.endswith(":") for r in f.dir_refs()))
+
+    def test_home_is_shortened(self):
+        self.assertEqual(f.tilde(str(Path.home() / "x")), "~/x")
+
+
 class ExportRef(unittest.TestCase):
     """Three ways to name a session, and one rule for telling them apart."""
 

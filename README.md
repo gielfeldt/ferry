@@ -146,7 +146,8 @@ reached as `./work:bug-hunt`. Naming the directory is what makes the third form
 safe — session names are unique only within a directory, so a bare name hunted
 across the machine would eventually pick the wrong one without saying so.
 `ferry sessions --global` lists what there is, with a path for each that is
-checked to resolve.
+checked to resolve, and `ferry export <TAB>` offers those directories
+alongside the local names and the stores.
 
 What it prints is the conversation: what you asked, what Claude answered, and
 one line per tool call. That is about 1% of a transcript — a 17.9 MB session
