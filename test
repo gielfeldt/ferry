@@ -15,6 +15,10 @@ script that CI can skip.
 import contextlib
 import importlib.util
 import io
+import os
+import shlex
+import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -204,6 +208,89 @@ class WrittenDates(unittest.TestCase):
 
     def test_an_empty_log_is_empty(self):
         self.assertEqual(f.written_dates(""), {})
+
+
+class BashCompletion(unittest.TestCase):
+    """The completion script itself, run by a real bash.
+
+    Worth the subprocess: this is shell, so none of the Python tests can see
+    it, and the one bug it had - every candidate arriving as a single word,
+    which readline then pasted onto the command line - was invisible until you
+    counted the array rather than printing it.
+    """
+
+    SCRIPT = FERRY.parent / "completions" / "ferry.bash"
+
+    def bashes(self):
+        """Every bash on the machine, not just the first on PATH.
+
+        macOS keeps 3.2 at /bin/bash and a modern one in brew, and the two do
+        not agree about quoting inside a parameter expansion - so testing only
+        the one PATH happens to find is how a shell bug ships.
+        """
+        found, seen = [], set()
+        for b in (shutil.which("bash"), "/bin/bash", "/usr/local/bin/bash",
+                  "/opt/homebrew/bin/bash"):
+            if b and os.access(b, os.X_OK):
+                real = os.path.realpath(b)
+                if real not in seen:
+                    seen.add(real)
+                    found.append(b)
+        return found
+
+    def complete(self, line, candidates, bash=None):
+        """COMPREPLY after _ferry, with `ferry complete` stubbed out."""
+        if not self.SCRIPT.exists():
+            self.skipTest("no completion script")
+        if bash is None:
+            bashes = self.bashes()
+            if not bashes:
+                self.skipTest("no bash")
+            bash = bashes[0]
+        d = Path(tempfile.mkdtemp())
+        stub = d / "ferry"
+        stub.write_text("#!/bin/sh\nprintf '%s\\n' " +
+                        " ".join(f"'{c}'" for c in candidates) + "\n")
+        stub.chmod(0o755)
+        env = dict(os.environ, PATH=f"{d}:{os.environ['PATH']}")
+        r = subprocess.run(
+            [bash, "--norc", "-c",
+             f'. "{self.SCRIPT}"; COMP_LINE={shlex.quote(line)}; '
+             f'COMP_POINT=${{#COMP_LINE}}; _ferry; '
+             f'printf "%s\\n" "${{#COMPREPLY[@]}}"; '
+             f'printf "%s\\n" "${{COMPREPLY[@]}}"'],
+            capture_output=True, text=True, env=env)
+        out = r.stdout.splitlines()
+        return int(out[0]), out[1:]
+
+    def test_each_candidate_stays_its_own_word(self):
+        """One word per candidate, or readline pastes the lot onto the line."""
+        for b in self.bashes() or [None]:
+            with self.subTest(bash=b):
+                n, got = self.complete(
+                    "ferry load store:",
+                    ["store:alpha/", "store:beta/", "store:gamma/"], b)
+                self.assertEqual(n, 3)
+                self.assertEqual(got, ["alpha/", "beta/", "gamma/"])
+
+    def test_the_store_prefix_is_trimmed_off(self):
+        """bash replaces only the text after the last colon, so only that part
+        may be handed back."""
+        _, got = self.complete("ferry load store:be", ["store:acme/"])
+        self.assertEqual(got, ["acme/"])
+
+    def test_a_path_keeps_everything_after_the_colon(self):
+        _, got = self.complete("ferry load store:acme/b",
+                               ["store:acme/bug-hunt"])
+        self.assertEqual(got, ["acme/bug-hunt"])
+
+    def test_a_word_with_no_colon_is_left_alone(self):
+        _, got = self.complete("ferry lis", ["list"])
+        self.assertEqual(got, ["list"])
+
+    def test_no_candidates_is_not_an_error(self):
+        n, _ = self.complete("ferry load store:zz", [])
+        self.assertEqual(n, 0)
 
 
 class StoreRefs(unittest.TestCase):
