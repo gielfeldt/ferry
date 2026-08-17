@@ -45,7 +45,7 @@ if [ -z "$REF" ]; then
 fi
 [ -n "$REF" ] || {
     echo "ferry: could not work out which release to install from $REPO" >&2
-    echo "       set one:  FERRY_REF=v1.2.7 sh install.sh" >&2
+    echo "       set one:  FERRY_REF=v1.0.0 sh install.sh" >&2
     exit 1; }
 
 echo "installing ferry $REF"

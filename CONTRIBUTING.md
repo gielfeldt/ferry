@@ -37,7 +37,7 @@ HOME=$(mktemp -d) ./test
 
 Several tests skip when there is no registered store or no sessions, and it is
 easy to write one that quietly depends on yours - it passes for you and fails
-on CI, where neither exists. That is what happened to v1.2.14.
+on CI, where neither exists, and it has failed a release before now.
 
 Needs python3, and `bash` for the handful that run the completion script for
 real. Nothing else: no network, no git repo, no store, and never your actual
@@ -103,8 +103,8 @@ or `:`, which mean "keep going" and must not get a space after them.
 Push a tag. That is the whole of it:
 
 ```sh
-git tag -a v1.2.14 -m "what changed"
-git push origin v1.2.14
+git tag -a v1.0.1 -m "what changed"
+git push origin v1.0.1
 ```
 
 A workflow runs the tests, writes the tag's version into `ferry`, and
@@ -121,8 +121,8 @@ up a different name from however the command was typed that day.
 Two things worth doing by hand before tagging, because nothing else will:
 
 - **Install the release afterwards and use it**, rather than testing your
-  checkout. A `BrokenPipeError` in `ferry export … | head` shipped in 1.2.11
-  and was found by the first command run against the installed build.
+  checkout. A `BrokenPipeError` in `ferry export … | head` once shipped in a
+  release and was found by the first command run against the installed build.
 - **Try it on a big session.** Output smaller than a pipe buffer never
   exercises a closed pipe, which is exactly how that one got through.
 
