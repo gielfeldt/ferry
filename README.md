@@ -74,7 +74,7 @@ accident.
 ferry add <name> <git-url> [--key <file>] [--path <dir>]
 ferry stores
 ferry sessions [<dir>] [--global] [--all]
-ferry memory
+ferry memory [<dir>] [--global]
 ferry save <session> [to] <store>:<dir> [--force]
 ferry save --memory [to] <store>:<dir> [--force]
 ferry load <store>:<path> [--force]
@@ -83,6 +83,7 @@ ferry move <store>:<path> <store>:<dir> [--force]
 ferry move --memory <store>:<dir> <store>:<dir> [--force]
 ferry export <session>|<store>:<path>|<dir>:<session>
              [--tools] [--media <dir>] [--raw] [--all]
+ferry export --memory <dir>|<store>:<dir>
 ferry list [<store>[:<path>]]
 ferry list --memory [<store>[:<dir>]]
 ferry update [<store>]
@@ -98,6 +99,8 @@ ferry sessions --global                       # every named session, and where
 ferry sessions --all                          # unnamed ones too, listed by id
 ferry sessions ~/develop/acme                 # another directory, same rules
 ferry memory                                  # notes in this directory
+ferry memory ~/develop/acme                   # notes in another
+ferry memory --global                         # every directory that remembers
 
 ferry save bug-hunt to work:acme              # -> acme/bug-hunt.jsonl
 ferry save --memory to work:acme              # -> acme/memory/
@@ -110,6 +113,7 @@ ferry load --memory work:acme                 # that folder's memory
 ferry update work                             # pull, and explain a divergence
 
 ferry export bug-hunt                         # read it, as markdown
+ferry export --memory work:acme               # a folder's notes, in full
 ferry export work:acme/bug-hunt --tools       # with what the tools did
 ferry export bug-hunt --raw > bug-hunt.jsonl  # the transcript itself
 
@@ -146,7 +150,17 @@ two disagree; not being able to say a new name means it cannot happen. To
 rename, `/rename` the session and save it again.
 
 **Memory belongs to a directory, not a session.** Claude keeps it in
-`memory/*.md` beside the transcripts, shared by everything started there.
+`memory/*.md` beside the transcripts, shared by everything started there. So
+where a session ref names a conversation, a memory ref names a directory —
+which is the whole of it, with nothing after the colon:
+
+```sh
+ferry memory                          # notes here
+ferry memory ~/develop/acme           # notes there
+ferry memory --global                 # every directory that remembers anything
+ferry export --memory ~/develop/acme  # those notes in full, as one document
+ferry export --memory work:acme       # or from a store, without loading them
+```
 
 **`--memory` says which of the two you mean, everywhere.** A store keeps
 sessions and memory in separate trees, so nothing has to be inferred from a

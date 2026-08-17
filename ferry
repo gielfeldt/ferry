@@ -738,8 +738,72 @@ def fenced(text, lang=""):
     return f"\n{fence}{lang}\n{text}\n{fence}\n"
 
 
+def memory_source(ref):
+    """The memory directory a ref names: here, in a store, or elsewhere.
+
+    The same three forms a session takes, minus the name - memory belongs to a
+    directory, so the directory is the whole of the ref.
+    """
+    if ":" in ref:
+        head, _, tail = ref.partition(":")
+        if head in repos():
+            alias, path = split_ref(ref, directory=True)
+            mem = repo_dir(alias) / in_store(path, memory=True)
+            if not mem.is_dir():
+                die(f"no memory at {ref}")
+            return mem
+        ref = head if not tail else ref
+    where = Path(os.path.expanduser(ref))
+    if not where.is_dir():
+        die(f"no such directory: {ref}\n"
+            f"       for a store, ferry knows: "
+            f"{', '.join(sorted(repos())) or 'none yet'}")
+    mem = slug_dir(where) / "memory"
+    if not mem.is_dir() or not any(mem.glob("*.md")):
+        die(f"no memory for {where}")
+    return mem
+
+
+def render_memory(mem, out=sys.stdout):
+    """A directory's memory as one document.
+
+    The notes are markdown already, so this is mostly a matter of putting them
+    in order and saying where each began. Frontmatter is turned into the
+    heading it was describing rather than printed as itself.
+    """
+    notes = sorted(p for p in mem.glob("*.md") if p.name != "MEMORY.md")
+    index = mem / "MEMORY.md"
+    out.write(f"# memory\n\n*{len(notes)} note(s)*\n")
+
+    if index.exists():
+        out.write("\n## MEMORY.md\n\n"
+                  + index.read_text(errors="replace").strip() + "\n")
+    for n in notes:
+        text = n.read_text(errors="replace")
+        body = strip_frontmatter(text)
+        desc = note_description(n)
+        out.write(f"\n## {n.name}\n")
+        if desc and desc not in body:
+            out.write(f"\n*{desc}*\n")
+        out.write("\n" + body.strip() + "\n")
+
+
+def strip_frontmatter(text):
+    """The note without its YAML header, which the heading already said."""
+    if not text.startswith("---"):
+        return text
+    end = text.find("\n---", 3)
+    return text[end + 4:] if end != -1 else text
+
+
 def cmd_export(args):
     """Print a session: as markdown, or exactly as it is on disk."""
+    if args.memory:
+        if args.raw or args.tools or args.media:
+            die("--memory is a directory of notes, so --raw, --tools and "
+                "--media have nothing to do there")
+        return render_memory(memory_source(args.session))
+
     src = export_source(args.session)
     if args.raw:
         if args.tools or args.media:
@@ -934,7 +998,7 @@ FILE_FLAGS = {"--key", "--path", "--media"}
 NAME_FLAGS = {"--name"}
 
 # Commands that take nothing at all after them.
-NO_ARGS = {"stores", "memory"}
+NO_ARGS = {"stores"}
 
 # `ferry complete` answers in three ways, because an empty list cannot say
 # which kind of nothing it means:
@@ -948,11 +1012,11 @@ COMMANDS = {
     "add":      ["--key", "--path"],
     "stores":   [],
     "sessions": ["--global", "--all"],
-    "memory":   [],
+    "memory":   ["--global"],
     "save":     ["--memory", "--force", "--allow-plaintext"],
     "load":     ["--memory", "--force", "--name"],
     "move":     ["--memory", "--force"],
-    "export":   ["--tools", "--media", "--raw", "--all"],
+    "export":   ["--tools", "--media", "--raw", "--all", "--memory"],
     "list":     ["--memory"],
     "update":   [],
 }
@@ -1081,12 +1145,14 @@ def cmd_complete(args):
 
     memory = given(words, "--memory", "-m")
     if not cur.startswith("-"):
-        if cmd == "sessions":
+        if cmd in ("sessions", "memory"):
             # A directory to look in. The ones that hold sessions come first;
             # anything else is an ordinary path, and the shell can finish it.
             if len(prev) == 2:
-                out = [d[:-1] for d in dir_refs(given(words, "--all", "-a"))
-                       if d[:-1].startswith(cur)]
+                here = memory_dirs() if cmd == "memory" else None
+                out = sorted(tilde(d) for d in here) if here is not None else \
+                    [d[:-1] for d in dir_refs(given(words, "--all", "-a"))]
+                out = [d for d in out if d.startswith(cur)]
                 if not out:
                     sys.exit(FILES)
         elif cmd == "update":
@@ -1107,7 +1173,14 @@ def cmd_complete(args):
                 if len(prev) == (2 if memory else 3) and "to".startswith(cur):
                     out.append("to")
         elif cmd == "export":
-            if len(prev) == 2:
+            if len(prev) == 2 and given(words, "--memory", "-m"):
+                # A directory of notes, so the same places `ferry memory` and
+                # `list --memory` know about - never a session name.
+                out = [c for c in sorted(tilde(d) for d in memory_dirs())
+                       + store_refs(cur, "memory") if c.startswith(cur)]
+                if not out and (cur.startswith(("~", "/", ".")) or "/" in cur):
+                    sys.exit(FILES)
+            elif len(prev) == 2:
                 everything = given(words, "--all", "-a")
                 head, sep, tail = cur.partition(":")
                 if sep and head not in repos():
@@ -1179,19 +1252,62 @@ def cmd_update(args):
               f"the worst case is re-saving them.")
 
 
+def memory_dirs():
+    """Every directory on this machine that remembers something, as real paths.
+
+    The same shape as session_dirs, and for the same reason: memory belongs to
+    a directory, so saying which one is the only way to name it.
+    """
+    out = []
+    if CLAUDE_PROJECTS.is_dir():
+        for d in sorted(CLAUDE_PROJECTS.iterdir()):
+            if not (d / "memory").is_dir() or not any((d / "memory").glob("*.md")):
+                continue
+            first = next(iter(sorted(d.glob("*.jsonl"))), None)
+            where = session_cwd(first) if first else from_slug(d.name)
+            if where and Path(where).is_dir():
+                out.append(where)
+    return out
+
+
 def cmd_memory(args):
-    """What this directory remembers, so you know what you would be saving."""
-    mem = slug_dir() / "memory"
+    """What a directory remembers - this one, another, or all of them."""
+    if args.where and args.global_:
+        die("a directory and --global ask different questions - "
+            "one place, or all of them")
+    if args.global_:
+        return memory_everywhere()
+
+    where = Path(os.path.expanduser(args.where)) if args.where else Path.cwd()
+    if args.where and not where.is_dir():
+        die(f"no such directory: {args.where}")
+    mem = slug_dir(where) / "memory"
     notes = sorted(p for p in mem.glob("*.md") if p.name != "MEMORY.md") \
         if mem.is_dir() else []
     index = mem / "MEMORY.md"
 
     if not notes and not index.exists():
-        print(f"no memory for {Path.cwd()}")
+        print(f"no memory for {where}")
         return
 
     print_notes(mem)
     print(f"\n  {len(notes)} note(s) in {mem}")
+
+
+def memory_everywhere():
+    """Which directories remember anything, and how much."""
+    rows = []
+    for where in memory_dirs():
+        mem = slug_dir(where) / "memory"
+        n = len([p for p in mem.glob("*.md") if p.name != "MEMORY.md"])
+        rows.append((tilde(where), n))
+    if not rows:
+        print("no memory anywhere on this machine")
+        return
+    width = min(max(len(r[0]) for r in rows), 48)
+    for where, n in sorted(rows):
+        print(f"  {where:<{width}}  {n:5} note(s)")
+    print("\n  read one with:  ferry memory <dir>")
 
 
 def from_slug(slug):
@@ -1365,7 +1481,7 @@ USAGE = """\
   ferry add <name> <git-url> [--key <file>] [--path <dir>]
   ferry stores
   ferry sessions [<dir>] [--global] [--all]
-  ferry memory
+  ferry memory [<dir>] [--global]
   ferry save <session> [to] <store>:<dir> [--force]
   ferry save --memory [to] <store>:<dir> [--force]
   ferry load <store>:<path> [--force]
@@ -1376,6 +1492,7 @@ USAGE = """\
   ferry list --memory [<store>[:<dir>]]
   ferry export <session>|<store>:<path>|<dir>:<session>
                [--tools] [--media <dir>] [--raw] [--all]
+  ferry export --memory <dir>|<store>:<dir>
   ferry update [<store>]\
 """
 
@@ -1391,7 +1508,8 @@ examples:
     ferry sessions --global                       everywhere, and where each is
     ferry sessions --all                          unnamed ones too, by id
     ferry sessions ~/develop/acme                 another directory
-    ferry memory
+    ferry memory                                  notes here
+    ferry memory --global                         everywhere that remembers
 
   send it
     ferry save bug-hunt to work:acme              -> acme/bug-hunt.jsonl
@@ -1408,6 +1526,7 @@ examples:
     ferry export bug-hunt                         as markdown, to stdout
     ferry export work:acme/bug-hunt --tools       with what the tools did
     ferry export ~/develop/acme:bug-hunt          one in another directory
+    ferry export --memory work:acme               a folder's notes, in full
     ferry export bug-hunt --raw > bug-hunt.jsonl  the transcript itself
 
   tidy the store up
@@ -1452,7 +1571,11 @@ def main():
                    help="include unnamed sessions, listed by id")
     p.set_defaults(func=cmd_sessions)
 
-    p = sub.add_parser("memory", help="what this directory remembers")
+    p = sub.add_parser("memory", help="what a directory remembers")
+    p.add_argument("where", nargs="?", metavar="<dir>",
+                   help="another directory, instead of this one")
+    p.add_argument("-g", "--global", dest="global_", action="store_true",
+                   help="every directory that remembers anything")
     p.set_defaults(func=cmd_memory)
 
     p = sub.add_parser("save", help="copy a session or memory into a store")
@@ -1494,6 +1617,8 @@ def main():
                    help="the transcript exactly as it is")
     p.add_argument("-a", "--all", action="store_true",
                    help="complete unnamed sessions too, by id")
+    p.add_argument("-m", "--memory", action="store_true",
+                   help="a directory's memory, not a session")
     p.set_defaults(func=cmd_export)
 
     p = sub.add_parser("list", help="what a store holds, or the stores")

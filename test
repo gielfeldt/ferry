@@ -836,6 +836,8 @@ class Completion(unittest.TestCase):
              "sessionId": "named"}) + "\n")
         (here / "nameless.jsonl").write_text(_json.dumps(
             {"type": "user", "cwd": str(Path.cwd())}) + "\n")
+        (here / "memory").mkdir()
+        (here / "memory" / "a-note.md").write_text("---\ndescription: x\n---\n")
 
         self.saved = (f.repos, f.CLAUDE_PROJECTS)
         f.repos = lambda: {"work": {"path": str(self.store)}}
@@ -960,7 +962,7 @@ class Completion(unittest.TestCase):
     def test_a_command_taking_no_arguments_says_so(self):
         """`ferry stores <TAB>` offering filenames is noise - nothing goes
         there, which is a different answer from having no suggestion."""
-        for line in ("ferry stores ", "ferry memory "):
+        for line in ("ferry stores ",):
             with self.subTest(line=line):
                 self.assertEqual(self.status_of(line), f.NOTHING)
 
@@ -1005,6 +1007,23 @@ class Completion(unittest.TestCase):
     def test_a_long_flag_is_not_read_as_a_bunch(self):
         """--global contains an 'a', and must not therefore count as --all."""
         self.assertFalse(f.given(["ferry", "sessions", "--global"], "--all", "-a"))
+
+    def test_memory_completes_directories_that_remember_something(self):
+        """Not the same set as the ones holding sessions."""
+        self.assertEqual(self.complete_line("ferry memory "),
+                         [f.tilde(str(Path.cwd()))])
+
+    def test_export_memory_offers_stores_as_well(self):
+        """`export -m` reads from either side, like `export` itself - and a
+        store is offered a level at a time, as everywhere else."""
+        got = self.complete_line("ferry export -m ")
+        self.assertIn("work:", got)                      # the store
+        self.assertIn(f.tilde(str(Path.cwd())), got)     # and this directory
+        self.assertEqual(self.complete_line("ferry export -m work:"),
+                         ["work:acme"])                  # then its memory
+
+    def test_export_memory_never_offers_a_session(self):
+        self.assertNotIn("bug-hunt", self.complete_line("ferry export -m "))
 
     def test_move_completes(self):
         self.assertEqual(self.complete_line("ferry mo"), ["move"])
