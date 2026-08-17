@@ -17,7 +17,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-__version__ = "1.2.2"
+__version__ = "1.2.3"
 
 CONFIG = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config") / "ferry"
 CONFIG_FILE = CONFIG / "repos.json"
@@ -772,14 +772,15 @@ COMMANDS = {
 def store_refs(prefix, kind="any"):
     """<store>: and <store>:<path> candidates for whatever is typed so far.
 
-    Only ever walks the store's own directory, so it stays fast enough for a
-    TAB press. Session names are deliberately not offered - naming them means
-    reading every transcript in the directory, which takes about a second in a
-    folder of any size.
+    One level at a time, the way filename completion works: `work:` offers the
+    folders, and only once you are inside one does it offer what is in it. The
+    alternative - every path in the store at once - buries the answer in
+    everything else the store has ever held.
 
-    The store keeps sessions and memory in separate trees, so which tree to
-    walk is simply which kind was asked for, and what comes back is the path
-    you would type - never the tree it was found in.
+    A folder comes back with a trailing slash, which with `complete -o nospace`
+    leaves the cursor ready to go deeper. Session names are not read from the
+    transcripts here: that means opening every one, which is far too slow to
+    sit behind a TAB press.
     """
     names = sorted(repos())
     if ":" not in prefix:
@@ -792,25 +793,28 @@ def store_refs(prefix, kind="any"):
     if not root.is_dir():
         return []
 
+    # Everything up to the last slash is settled; the rest is being typed.
+    head, _, _typing = path.rpartition("/")
     trees = [MEMORIES] if kind == "memory" else \
             [SESSIONS] if kind == "session" else [SESSIONS, MEMORIES]
     out = []
     for tree in trees:
-        base = root / tree
+        base = root / tree / head if head else root / tree
         if not base.is_dir():
             continue
-        for f in base.rglob("*"):
-            if ".git" in f.parts:
+        for f in sorted(base.iterdir()):
+            if f.name.startswith("."):
                 continue
-            rel = f.relative_to(base).as_posix()
+            rel = f"{head}/{f.name}" if head else f.name
             if f.is_dir():
-                out.append(f"{alias}:{rel}")
-            elif tree == SESSIONS and f.suffix == ".jsonl":
+                # --memory takes the folder itself, so that is an answer and
+                # not just a step on the way to one.
+                if kind == "memory" and any(f.glob("*.md")):
+                    out.append(f"{alias}:{rel}")
+                if kind != "memory" or any(c.is_dir() for c in f.iterdir()):
+                    out.append(f"{alias}:{rel}/")
+            elif kind == "session" and f.suffix == ".jsonl":
                 out.append(f"{alias}:{rel[:-6]}")
-            elif tree == MEMORIES and f.suffix == ".md":
-                # memory is addressed by its folder, never by a note
-                parent = f.parent.relative_to(base).as_posix()
-                out.append(f"{alias}:" + ("" if parent == "." else parent))
     return sorted(set(c for c in out if c.startswith(prefix)))
 
 

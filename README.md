@@ -199,8 +199,9 @@ fpath=(~/.local/share/zsh/site-functions $fpath)
 ```
 
 Completes commands, each command's flags, and store references — so
-`ferry load work:<TAB>` walks what the store actually holds, and `--memory`
-changes what is offered, because it changes which tree is being asked about. Session names are
+`ferry load work:<TAB>` walks what the store actually holds, one level at a
+time like filename completion, and `--memory` changes what is offered because
+it changes which tree is being asked about. Session names are
 not completed: naming them means reading every transcript in the directory,
 which takes about a second in a folder of any size, and that is too slow to sit
 behind a TAB press. `ferry sessions` lists them.

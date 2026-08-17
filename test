@@ -206,6 +206,52 @@ class WrittenDates(unittest.TestCase):
         self.assertEqual(f.written_dates(""), {})
 
 
+class StoreRefs(unittest.TestCase):
+    """Completion walks the store one level at a time. Offering every path at
+    once buried the answer in everything the store had ever held - 57 lines to
+    choose a folder, in a real store."""
+
+    def setUp(self):
+        self.root = Path(tempfile.mkdtemp())
+        for p in ("sessions/acme/user-import.jsonl",
+                  "sessions/acme/review-notes.jsonl",
+                  "sessions/personal/deep/nested.jsonl",
+                  "memories/acme/note.md",
+                  "memories/globex/note.md"):
+            (self.root / p).parent.mkdir(parents=True, exist_ok=True)
+            (self.root / p).write_text("x")
+        self._repos = f.repos
+        f.repos = lambda: {"s": {"path": str(self.root)}}
+
+    def tearDown(self):
+        f.repos = self._repos
+
+    def test_the_top_offers_folders_not_everything_in_them(self):
+        got = f.store_refs("s:", "session")
+        self.assertEqual(got, ["s:acme/", "s:personal/"])
+
+    def test_inside_a_folder_offers_its_sessions(self):
+        self.assertEqual(f.store_refs("s:acme/", "session"),
+                         ["s:acme/user-import", "s:acme/review-notes"])
+
+    def test_a_folder_keeps_its_slash_so_the_next_tab_goes_deeper(self):
+        self.assertEqual(f.store_refs("s:personal/", "session"),
+                         ["s:personal/deep/"])
+
+    def test_memory_offers_the_folder_itself_as_an_answer(self):
+        self.assertEqual(f.store_refs("s:", "memory"), ["s:acme", "s:globex"])
+
+    def test_a_destination_is_a_directory_in_either_tree(self):
+        self.assertEqual(f.store_refs("s:"),
+                         ["s:acme/", "s:globex/", "s:personal/"])
+
+    def test_a_prefix_narrows_it(self):
+        self.assertEqual(f.store_refs("s:bee", "session"), ["s:acme/"])
+
+    def test_an_unknown_store_offers_nothing(self):
+        self.assertEqual(f.store_refs("nope:", "session"), [])
+
+
 class PrintNotes(unittest.TestCase):
     """One printer for both `memory` here and `list` in a store, so a memory
     folder reads the same either way."""
