@@ -198,13 +198,16 @@ zsh needs the directory on its `fpath`, before `compinit`:
 fpath=(~/.local/share/zsh/site-functions $fpath)
 ```
 
-Completes commands, each command's flags, and store references — so
-`ferry load work:<TAB>` walks what the store actually holds, one level at a
-time like filename completion, and `--memory` changes what is offered because
-it changes which tree is being asked about. Session names are
-not completed: naming them means reading every transcript in the directory,
-which takes about a second in a folder of any size, and that is too slow to sit
-behind a TAB press. `ferry sessions` lists them.
+Completes commands, each command's flags, store references and session names.
+`ferry load work:<TAB>` walks what the store holds, one level at a time like
+filename completion; `ferry save <TAB>` offers the named sessions in the
+directory you are standing in; and `--memory` changes what is offered, because
+it changes which of the store's two trees is being asked about.
+
+Naming the local sessions means reading each transcript, which sounds slow and
+is not - about 0.2s for 60 MB, because the name is on a line that is cheap to
+recognise. Names inside the *store* are still not offered: those files are
+encrypted, so there is nothing to read without decrypting the lot.
 
 ## Tests
 

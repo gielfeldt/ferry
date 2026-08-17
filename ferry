@@ -17,7 +17,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-__version__ = "1.2.4"
+__version__ = "1.2.5"
 
 CONFIG = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config") / "ferry"
 CONFIG_FILE = CONFIG / "repos.json"
@@ -778,9 +778,8 @@ def store_refs(prefix, kind="any"):
     everything else the store has ever held.
 
     A folder comes back with a trailing slash, which with `complete -o nospace`
-    leaves the cursor ready to go deeper. Session names are not read from the
-    transcripts here: that means opening every one, which is far too slow to
-    sit behind a TAB press.
+    leaves the cursor ready to go deeper. What a stored session is called is
+    its filename, so nothing here needs decrypting to answer.
     """
     names = sorted(repos())
     if ":" not in prefix:
@@ -853,10 +852,16 @@ def cmd_complete(args):
         elif cmd == "load":
             out = store_refs(cur, "memory" if memory else "session")
         elif cmd == "save":
-            # <session> [to] <store>:<dir> - offer the connector and the store
-            out = store_refs(cur)
-            if len(prev) == 3 and "to".startswith(cur):
-                out.append("to")
+            # <session> [to] <store>:<dir>, or --memory [to] <store>:<dir>.
+            # The first word is a session here, not a store ref - what you are
+            # naming is a conversation on this machine.
+            if len(prev) == 2 and not memory:
+                out = sorted(n for n in names_here(slug_dir())
+                             if n.startswith(cur))
+            else:
+                out = store_refs(cur)
+                if len(prev) == (2 if memory else 3) and "to".startswith(cur):
+                    out.append("to")
         elif cmd == "move":
             # source takes what --memory says it takes; the destination is
             # always a folder to put it in

@@ -527,6 +527,33 @@ class Completion(unittest.TestCase):
     def test_line_mode_survives_an_unbalanced_quote(self):
         self.complete_line("ferry save \"unclosed")
 
+    def test_save_offers_this_directorys_sessions_first(self):
+        """The first word of `save` is a conversation here, not a store ref -
+        it was offering stores, which are what the *second* word takes."""
+        old = f.names_here
+        f.names_here = lambda where: {"bug-hunt": None, "cto": None}
+        try:
+            self.assertEqual(self.complete_line("ferry save "),
+                             ["bug-hunt", "cto"])
+            self.assertEqual(self.complete_line("ferry save c"), ["cto"])
+        finally:
+            f.names_here = old
+
+    def test_save_offers_the_connector_and_store_after_that(self):
+        got = self.complete_line("ferry save bug-hunt ")
+        self.assertIn("to", got)
+
+    def test_save_memory_has_no_session_argument(self):
+        """--memory takes no session, so the first word is already the
+        destination."""
+        old = f.names_here
+        f.names_here = lambda where: {"bug-hunt": None}
+        try:
+            self.assertNotIn("bug-hunt", self.complete_line("ferry save --memory "))
+            self.assertIn("to", self.complete_line("ferry save --memory "))
+        finally:
+            f.names_here = old
+
     def test_move_completes(self):
         self.assertEqual(self.complete_line("ferry mo"), ["move"])
         self.assertIn("--memory", self.complete_line("ferry move -"))
