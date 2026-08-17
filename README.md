@@ -185,8 +185,14 @@ bash completion -> ~/.local/share/bash-completion/completions/ferry
 zsh completion  -> ~/.local/share/zsh/site-functions/_ferry
 ```
 
-bash picks that up on its own. zsh needs the directory on its `fpath`, before
-`compinit`:
+bash picks that up on its own. If `ferry <TAB>` does nothing, your bash is
+older than 4.2 and does not search that directory - source the file directly:
+
+```sh
+echo ". ~/.local/share/bash-completion/completions/ferry" >> ~/.bash_profile
+```
+
+zsh needs the directory on its `fpath`, before `compinit`:
 
 ```sh
 fpath=(~/.local/share/zsh/site-functions $fpath)

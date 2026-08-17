@@ -14,4 +14,9 @@ _ferry() {
         COMPREPLY=("${COMPREPLY[@]#"$head"}")
     fi
 }
-complete -o nosort -o nospace -F _ferry ferry
+# -o nosort keeps ferry's own ordering, but it is bash 4.4+ and older bash
+# rejects the whole command rather than the one option - macOS still ships 3.2,
+# where that would leave ferry with no completion at all. Sorted is a fine
+# second best; the candidates come back sorted anyway.
+complete -o nosort -o nospace -F _ferry ferry 2>/dev/null ||
+    complete -o nospace -F _ferry ferry

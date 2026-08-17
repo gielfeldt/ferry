@@ -55,8 +55,12 @@ class Slug(unittest.TestCase):
     looking in the wrong place, silently."""
 
     def test_replaces_every_non_alphanumeric(self):
-        self.assertEqual(f.slug_dir("/home/user/dev/my-app").name,
-                         "-home-user-dev-my-app")
+        # Not /home: macOS remaps it to /System/Volumes/Data/home, and slug_dir
+        # resolves before transforming - as it must, since Claude Code files a
+        # session under the resolved path too (verified: a session started in
+        # /tmp/x, where /tmp is a symlink, lands in -private-tmp-x).
+        self.assertEqual(f.slug_dir("/srv/user/dev/my-app").name,
+                         "-srv-user-dev-my-app")
 
     def test_keeps_case_and_digits(self):
         self.assertEqual(f.slug_dir("/srv/App2/Thing_X").name,

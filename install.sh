@@ -66,6 +66,17 @@ comp_tmp="$(mktemp)"
 if fetch_to "$comp_tmp" "completions/ferry.bash"; then
     mkdir -p "$BASHDIR" && mv "$comp_tmp" "$BASHDIR/ferry" \
         && echo "  bash completion -> $BASHDIR/ferry"
+    # That directory is only searched by bash-completion 2.x, which needs bash
+    # 4.2+. On an older bash the file would sit there unread and completion
+    # would look simply broken, so say what to add instead of leaving it.
+    if [ -n "${BASH_VERSION:-}" ]; then
+        case "$BASH_VERSION" in
+            [123].*|4.[01].*)
+                printf '    bash %s is too old to find that on its own:\n' \
+                    "${BASH_VERSION%%(*}"
+                printf '      echo ". %s" >> ~/.bash_profile\n' "$BASHDIR/ferry" ;;
+        esac
+    fi
 fi
 comp_tmp="$(mktemp)"
 if fetch_to "$comp_tmp" "completions/ferry.zsh"; then
