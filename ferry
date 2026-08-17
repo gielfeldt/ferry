@@ -1024,6 +1024,21 @@ def store_refs(prefix, kind="any"):
     return sorted(set(c for c in out if c.startswith(prefix)))
 
 
+def given(words, long, short):
+    """Was this flag typed, in either form?
+
+    Matching the long spelling alone was enough until the short ones existed,
+    and then `ferry load -m store:` quietly completed as though --memory had
+    not been given. Bunched shorts count too: -ag is both of them.
+    """
+    for w in words:
+        if w in (long, short):
+            return True
+        if w.startswith("-") and not w.startswith("--") and short[1] in w[1:]:
+            return True
+    return False
+
+
 def cmd_complete(args):
     """Emit completion candidates. Driven by the shell, not by you.
 
@@ -1064,13 +1079,13 @@ def cmd_complete(args):
     out = [f for f in COMMANDS.get(cmd, []) if f.startswith(cur)] if \
         cur.startswith("-") else []
 
-    memory = "--memory" in words
+    memory = given(words, "--memory", "-m")
     if not cur.startswith("-"):
         if cmd == "sessions":
             # A directory to look in. The ones that hold sessions come first;
             # anything else is an ordinary path, and the shell can finish it.
             if len(prev) == 2:
-                out = [d[:-1] for d in dir_refs("--all" in words or "-a" in words)
+                out = [d[:-1] for d in dir_refs(given(words, "--all", "-a"))
                        if d[:-1].startswith(cur)]
                 if not out:
                     sys.exit(FILES)
@@ -1093,7 +1108,7 @@ def cmd_complete(args):
                     out.append("to")
         elif cmd == "export":
             if len(prev) == 2:
-                everything = "--all" in words
+                everything = given(words, "--all", "-a")
                 head, sep, tail = cur.partition(":")
                 if sep and head not in repos():
                     # A directory ref: the sessions in that directory are the

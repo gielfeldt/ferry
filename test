@@ -985,6 +985,27 @@ class Completion(unittest.TestCase):
         self.assertEqual(got, [f.tilde(str(Path.cwd()))])
         self.assertTrue(all(not c.endswith(":") for c in got))
 
+    def test_a_short_flag_reaches_completion_too(self):
+        """`-m` and `--memory` are the same flag, and completion only knew the
+        long one - so `ferry load -m store:` completed as though it had not
+        been given at all."""
+        for short, long in (("ferry load -m work:", "ferry load --memory work:"),
+                            ("ferry export -a work:", "ferry export --all work:")):
+            with self.subTest(line=short):
+                self.assertEqual(self.complete_line(short),
+                                 self.complete_line(long))
+
+    def test_bunched_short_flags_count(self):
+        """-ag is both of them, which a plain `in words` cannot see."""
+        self.assertTrue(f.given(["ferry", "sessions", "-ag"], "--all", "-a"))
+        self.assertTrue(f.given(["ferry", "sessions", "-ag"], "--global", "-g"))
+        self.assertFalse(f.given(["ferry", "sessions", "-g"], "--all", "-a"))
+        self.assertFalse(f.given(["ferry", "sessions"], "--all", "-a"))
+
+    def test_a_long_flag_is_not_read_as_a_bunch(self):
+        """--global contains an 'a', and must not therefore count as --all."""
+        self.assertFalse(f.given(["ferry", "sessions", "--global"], "--all", "-a"))
+
     def test_move_completes(self):
         self.assertEqual(self.complete_line("ferry mo"), ["move"])
         self.assertIn("--memory", self.complete_line("ferry move -"))
