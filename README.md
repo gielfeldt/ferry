@@ -266,37 +266,10 @@ is not - about 0.2s for 60 MB, because the name is on a line that is cheap to
 recognise. Names inside the *store* are still not offered: those files are
 encrypted, so there is nothing to read without decrypting the lot.
 
-## Tests
+## Contributing
 
-```sh
-./test
-```
-
-Needs python3, and `bash` for the handful that run the completion script for
-real. Nothing else: no network, no git repo, no store, and never your actual
-`~/.claude` — anything that would need one builds a temporary copy, and the
-few that want a registered store skip when there is none. Runs on CI
-unchanged.
-
-## Releasing
-
-Push a tag. That is the whole of it:
-
-```sh
-git tag -a v1.2.14 -m "what changed"
-git push origin v1.2.14
-```
-
-A workflow runs the tests, writes the tag's version into `ferry`, and
-publishes a release carrying `ferry`, `ferry.bash` and `ferry.zsh`. The notes
-come from the tag's own message if it is annotated, and from the tagged commit
-otherwise.
-
-The version is written down in exactly one place — the tag. In the repo
-`__version__` is `0.0.0+dev`, so a copy taken from a checkout says what it is
-instead of claiming to be a release, and there is no second place to remember
-to bump. Assets are named after their paths in the repo, so they cannot pick
-up a different name from however the command was typed that day.
+Running the tests and cutting a release are covered in
+[CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 
