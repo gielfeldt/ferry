@@ -1,14 +1,31 @@
 # ferry completion for bash
 #   installed to ~/.local/share/bash-completion/completions/ferry
 _ferry() {
-    local IFS=$'\n' line token head i
+    local IFS=$'\n' line token head raw status i real
     line="${COMP_LINE:0:$COMP_POINT}"
     # Parse the raw line in ferry, not here: bash breaks words on ':' (it is in
     # COMP_WORDBREAKS), which would split "store:personal" into three words.
-    COMPREPLY=($(ferry complete --line "$line" 2>/dev/null))
-    # For the same reason bash replaces only the text after the last colon, so
-    # hand back just that part or nothing is inserted.
+    raw=$(ferry complete --line "$line" 2>/dev/null)
+    status=$?
     token=${line##* }
+    COMPREPLY=()
+
+    # 1: nothing belongs here, so offer nothing - not even a filename, which is
+    # what `complete -o default` would have done and cannot be switched off per
+    # call on bash 3.2. 2: a path belongs here.
+    [ $status -eq 1 ] && return
+    if [ $status -eq 2 ]; then
+        for i in $(compgen -f -- "$token"); do
+            real=${i/#\~/$HOME}
+            [ -d "$real" ] && i="$i/"
+            COMPREPLY+=("$i")
+        done
+        return
+    fi
+
+    COMPREPLY=($raw)
+    # bash replaces only the text after the last colon, so hand back just that
+    # part or nothing is inserted.
     if [[ $token == *:* ]]; then
         head=${token%"${token##*:}"}
         # Trimmed one element at a time on purpose. bash 3.2 collapses
@@ -21,10 +38,8 @@ _ferry() {
     fi
 }
 # -o nosort keeps ferry's own ordering, but it is bash 4.4+ and older bash
-# rejects the whole command rather than the one option - macOS still ships 3.2,
-# where that would leave ferry with no completion at all. Sorted is a fine
-# second best; the candidates come back sorted anyway.
-# -o default: where ferry offers nothing - the value of --key or --path, say -
-# fall back to filenames, which is what those positions actually want.
-complete -o nosort -o nospace -o default -F _ferry ferry 2>/dev/null ||
-    complete -o nospace -o default -F _ferry ferry
+# rejects the whole command rather than the one option - which would leave
+# ferry with no completion at all. Sorted is a fine second best; the candidates
+# come back sorted anyway.
+complete -o nosort -o nospace -F _ferry ferry 2>/dev/null ||
+    complete -o nospace -F _ferry ferry

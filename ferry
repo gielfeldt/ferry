@@ -758,9 +758,23 @@ def list_one(alias, path, memory):
               f"ferry update {alias}")
 
 
-# Options whose value ferry cannot guess: a path on this machine, or a name
-# you are about to invent.
-VALUE_FLAGS = {"--key", "--path", "--name"}
+# Options whose value is a path on this machine.
+FILE_FLAGS = {"--key", "--path"}
+
+# Options whose value is a name you are about to invent, which nothing can
+# guess and no file will match either.
+NAME_FLAGS = {"--name"}
+
+# Commands that take nothing at all after them.
+NO_ARGS = {"stores", "sessions", "memory"}
+
+# `ferry complete` answers in three ways, because an empty list cannot say
+# which kind of nothing it means:
+#
+#   0   these candidates (an empty list means no match)
+#   1   nothing belongs here - do not guess, not even a filename
+#   2   a path belongs here - let the shell complete files
+NOTHING, FILES = 1, 2
 
 COMMANDS = {
     "add":      ["--key", "--path"],
@@ -844,8 +858,10 @@ def cmd_complete(args):
     # A flag that takes a value: whatever comes next is a file or a name of
     # your choosing, and ferry has nothing useful to say about it. Saying
     # nothing lets the shell fall back to filename completion.
-    if len(words) >= 2 and words[-2] in VALUE_FLAGS:
-        return
+    if len(words) >= 2 and words[-2] in FILE_FLAGS:
+        sys.exit(FILES)
+    if len(words) >= 2 and words[-2] in NAME_FLAGS:
+        sys.exit(NOTHING)
 
     if len(prev) <= 1:                      # still choosing the command
         out = ("--help", "--version") if cur.startswith("-") else sorted(COMMANDS)
@@ -853,6 +869,9 @@ def cmd_complete(args):
         return
 
     cmd = prev[1]
+    if cmd in NO_ARGS:
+        sys.exit(NOTHING)
+
     out = [f for f in COMMANDS.get(cmd, []) if f.startswith(cur)] if \
         cur.startswith("-") else []
 

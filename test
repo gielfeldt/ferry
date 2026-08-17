@@ -563,14 +563,42 @@ class Completion(unittest.TestCase):
         self.assertNotIn("save", self.complete_line("ferry -"))
         self.assertNotIn("--help", self.complete_line("ferry "))
 
-    def test_nothing_is_offered_for_a_value_only_you_know(self):
-        """--key and --path take a path, --name a name you are inventing.
-        Answering with store refs there was worse than answering nothing:
-        silence lets the shell offer filenames instead."""
-        for line in ("ferry load --name ", "ferry add x --key ",
-                     "ferry add x --path ", "ferry load --name half-typed"):
+    def status_of(self, line):
+        """What `ferry complete` answers with, as its exit code."""
+        sys.argv = ["ferry", "complete", "--line", line]
+        with quiet():
+            try:
+                f.main()
+            except SystemExit as e:
+                return e.code or 0
+        return 0
+
+    def test_a_path_position_asks_the_shell_for_files(self):
+        """--key and --path take a path on this machine. ferry cannot know it,
+        but it can say that a filename is what belongs there."""
+        for line in ("ferry add x --key ", "ferry add x --path ",
+                     "ferry add x --key ~/half"):
             with self.subTest(line=line):
-                self.assertEqual(self.complete_line(line), [])
+                self.assertEqual(self.status_of(line), f.FILES)
+
+    def test_a_name_you_invent_gets_nothing_at_all(self):
+        """--name is a name you are about to make up: no candidate, and no
+        filename either."""
+        for line in ("ferry load --name ", "ferry load --name half-typed"):
+            with self.subTest(line=line):
+                self.assertEqual(self.status_of(line), f.NOTHING)
+
+    def test_a_command_taking_no_arguments_says_so(self):
+        """`ferry stores <TAB>` offering filenames is noise - nothing goes
+        there, which is a different answer from having no suggestion."""
+        for line in ("ferry stores ", "ferry sessions ", "ferry memory "):
+            with self.subTest(line=line):
+                self.assertEqual(self.status_of(line), f.NOTHING)
+
+    def test_an_ordinary_position_answers_normally(self):
+        for line in ("ferry load ", "ferry ", "ferry save "):
+            with self.subTest(line=line):
+                self.assertEqual(self.status_of(line), 0)
 
     def test_completion_resumes_after_the_value(self):
         got = self.complete_line("ferry load --name x ")

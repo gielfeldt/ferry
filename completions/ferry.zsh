@@ -3,13 +3,14 @@
 #compdef ferry
 _ferry() {
     local -a candidates
-    candidates=(${(f)"$(ferry complete --line "$BUFFER" 2>/dev/null)"})
-    # Nothing to offer means the position takes a path or a name of your own -
-    # so hand it to the file completer rather than answering with silence.
-    if (( ${#candidates} )); then
-        compadd -S '' -a candidates
-    else
-        _files
-    fi
+    local raw status
+    raw=$(ferry complete --line "$BUFFER" 2>/dev/null)
+    status=$?
+    # 1: nothing belongs in this position. 2: a path does. Anything else is a
+    # list of candidates, which may legitimately be empty.
+    (( status == 1 )) && return 1
+    (( status == 2 )) && { _files; return }
+    candidates=(${(f)raw})
+    (( ${#candidates} )) && compadd -S '' -a candidates
 }
 _ferry "$@"
