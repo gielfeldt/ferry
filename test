@@ -344,6 +344,130 @@ class SessionDirs(unittest.TestCase):
         self.assertEqual(f.tilde(str(Path.home() / "x")), "~/x")
 
 
+class StoreRegistry(unittest.TestCase):
+    """Adding, renaming and forgetting a store. The registry is a file of
+    names; what they point at is not ferry's to delete."""
+
+    def setUp(self):
+        self.home = Path(tempfile.mkdtemp())
+        self.d = {}
+        self.saved = (f.repos, f.save_repos, f.Path.home)
+        f.repos = lambda: dict(self.d)
+        f.save_repos = lambda d: self.d.clear() or self.d.update(d)
+
+    def tearDown(self):
+        f.repos, f.save_repos, f.Path.home = self.saved
+
+    def args(self, **kw):
+        return type("A", (), kw)()
+
+    def test_rename_moves_a_checkout_ferry_made(self):
+        """So the directory goes on matching the name."""
+        own = self.home / ".local/share/ferry"
+        (own / "old").mkdir(parents=True)
+        f.own_clone = lambda a: own / a
+        self.d["old"] = {"path": str(own / "old"), "url": "", "added": ""}
+        with quiet():
+            f.cmd_rename(self.args(name="old", new="new"))
+        self.assertIn("new", self.d)
+        self.assertNotIn("old", self.d)
+        self.assertTrue((own / "new").is_dir())
+        self.assertFalse((own / "old").exists())
+
+    def test_rename_leaves_a_checkout_you_adopted(self):
+        """It was yours before ferry knew about it."""
+        mine = self.home / "somewhere"
+        mine.mkdir()
+        f.own_clone = lambda a: self.home / ".local/share/ferry" / a
+        self.d["old"] = {"path": str(mine), "url": "", "added": ""}
+        with quiet():
+            f.cmd_rename(self.args(name="old", new="new"))
+        self.assertEqual(self.d["new"]["path"], str(mine))
+        self.assertTrue(mine.is_dir())
+
+    def test_rename_onto_a_taken_name_is_refused(self):
+        self.d = {"a": {"path": "/x", "url": "", "added": ""},
+                  "b": {"path": "/y", "url": "", "added": ""}}
+        with quiet(), self.assertRaises(SystemExit):
+            f.cmd_rename(self.args(name="a", new="b"))
+
+    def repo_with(self, *commits, remote=True, dirty=False):
+        """A real little repo, since this is about git state."""
+        root = Path(tempfile.mkdtemp())
+        origin, work = root / "origin", root / "work"
+        if remote:
+            subprocess.run(["git", "init", "-q", "--bare", str(origin)],
+                           check=True)
+            subprocess.run(["git", "clone", "-q", str(origin), str(work)],
+                           check=True, capture_output=True)
+        else:
+            subprocess.run(["git", "init", "-q", str(work)], check=True)
+        for k, v in (("user.email", "t@e"), ("user.name", "t")):
+            subprocess.run(["git", "-C", str(work), "config", k, v], check=True)
+        for i, pushed in enumerate(commits):
+            subprocess.run(["git", "-C", str(work), "commit", "-q",
+                            "--allow-empty", "-m", f"c{i}"], check=True)
+            if pushed and remote:
+                subprocess.run(["git", "-C", str(work), "push", "-q", "origin",
+                                "HEAD"], check=True, capture_output=True)
+        if dirty:
+            (work / "scratch").write_text("x")
+        return work
+
+    def test_a_store_in_step_with_its_remote_is_forgotten(self):
+        work = self.repo_with(True)
+        self.d["s"] = {"path": str(work), "url": "", "added": ""}
+        with quiet():
+            f.cmd_remove(self.args(name="s", force=False))
+        self.assertNotIn("s", self.d)
+
+    def test_work_the_remote_has_not_got_stops_it(self):
+        """Forgetting leaves the directory, so nothing is deleted - but a save
+        that never reached the remote becomes a path you have to remember."""
+        work = self.repo_with(True, False)          # one pushed, one not
+        self.d["s"] = {"path": str(work), "url": "", "added": ""}
+        with quiet() as (_, err), self.assertRaises(SystemExit):
+            f.cmd_remove(self.args(name="s", force=False))
+        self.assertIn("not on the remote", err.getvalue())
+        self.assertIn("s", self.d)                  # still registered
+
+    def test_no_remote_at_all_stops_it_too(self):
+        work = self.repo_with(True, remote=False)
+        self.d["s"] = {"path": str(work), "url": "", "added": ""}
+        with quiet() as (_, err), self.assertRaises(SystemExit):
+            f.cmd_remove(self.args(name="s", force=False))
+        self.assertIn("only copy", err.getvalue())
+
+    def test_uncommitted_changes_stop_it(self):
+        work = self.repo_with(True, dirty=True)
+        self.d["s"] = {"path": str(work), "url": "", "added": ""}
+        with quiet() as (_, err), self.assertRaises(SystemExit):
+            f.cmd_remove(self.args(name="s", force=False))
+        self.assertIn("uncommitted", err.getvalue())
+
+    def test_force_forgets_it_anyway(self):
+        work = self.repo_with(True, False)
+        self.d["s"] = {"path": str(work), "url": "", "added": ""}
+        with quiet():
+            f.cmd_remove(self.args(name="s", force=True))
+        self.assertNotIn("s", self.d)
+
+    def test_remove_forgets_without_deleting(self):
+        keep = self.repo_with(True)
+        self.d["gone"] = {"path": str(keep), "url": "", "added": ""}
+        with quiet() as (out, _):
+            f.cmd_remove(self.args(name="gone", force=False))
+        self.assertNotIn("gone", self.d)
+        self.assertTrue(keep.is_dir())          # the checkout is not ferry's
+        self.assertIn(str(keep), out.getvalue())  # and it says where
+
+    def test_removing_something_unknown_says_what_there_is(self):
+        self.d["real"] = {"path": "/x", "url": "", "added": ""}
+        with quiet() as (_, err), self.assertRaises(SystemExit):
+            f.cmd_remove(self.args(name="imaginary", force=False))
+        self.assertIn("real", err.getvalue())
+
+
 class MemoryRef(unittest.TestCase):
     """A memory ref names a directory, and may name one note in it."""
 

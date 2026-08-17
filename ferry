@@ -418,12 +418,34 @@ def commit_push(repo, message, paths):
 
 # ------------------------------------------------------------------ commands
 
-def cmd_add(args):
-    alias = args.name
+def own_clone(alias):
+    """Where ferry puts a store it cloned itself."""
+    return Path.home() / ".local/share/ferry" / alias
+
+
+def check_alias(alias):
     if not re.fullmatch(r"[A-Za-z0-9._-]+", alias):
-        die("a repo alias may hold letters, digits, dot, dash and underscore")
+        die("a store name may hold letters, digits, dot, dash and underscore")
+    return alias
+
+
+def cmd_add(args):
+    alias = check_alias(args.name)
+    known = repos().get(alias)
+    if known and args.force:
+        # Pointing the name elsewhere leaves the old checkout behind, which is
+        # the same trouble as forgetting it.
+        trouble = unsaved_work(Path(known["path"]))
+        if trouble:
+            print(f"  note: the old {alias} had {trouble}", file=sys.stderr)
+            print(f"        {known['path']}", file=sys.stderr)
+    if known and not args.force:
+        die(f"'{alias}' is already a store, at {known['path']}\n"
+            f"       ferry rename {alias} <new>   to free the name\n"
+            f"       ferry remove {alias}         to forget it\n"
+            f"       ferry add {alias} … --force  to point it somewhere else")
     path = Path(args.path).expanduser().resolve() if args.path else \
-        (Path.home() / ".local/share/ferry" / alias)
+        own_clone(alias)
     if not (path / ".git").exists():
         if not args.url:
             die("give a git url, or --path to a checkout you already have")
@@ -461,6 +483,75 @@ def cmd_add(args):
         print(f"  locked or unencrypted. If it has a key:  "
               f"ferry add {alias} --path {path} --key <file>")
         print(f"  to encrypt it for the first time:  cd {path} && git-crypt init")
+
+
+def unsaved_work(repo):
+    """What this checkout holds that its remote does not.
+
+    Forgetting a store leaves the directory, so nothing is deleted - but a save
+    that never reached the remote becomes a directory you have to remember,
+    which is the same as losing it.
+    """
+    if not repo.is_dir() or not (repo / ".git").exists():
+        return None          # gone, or never a repo: nothing ferry can vouch for
+    if git(repo, "status", "--porcelain", check=False).stdout.strip():
+        return "uncommitted changes"
+    if not has_upstream(repo):
+        return "no remote, so this checkout is the only copy"
+    ahead, _ = ahead_behind(repo)
+    return f"{ahead} commit(s) that are not on the remote" if ahead else None
+
+
+def cmd_rename(args):
+    """Give a store a different name.
+
+    The checkout moves with it when ferry made it, so the directory goes on
+    matching the name. One you adopted with --path stays where you put it -
+    it was yours before ferry knew about it.
+    """
+    old, new = args.name, check_alias(args.new)
+    d = repos()
+    if old not in d:
+        die(f"unknown store '{old}' (have: {', '.join(sorted(d)) or 'none yet'})")
+    if new in d:
+        die(f"'{new}' is already a store, at {d[new]['path']}")
+
+    path = Path(d[old]["path"])
+    if path == own_clone(old):
+        moved = own_clone(new)
+        if moved.exists():
+            die(f"{moved} is in the way")
+        path.rename(moved)
+        d[old]["path"] = str(moved)
+        print(f"{old} -> {new}  ({moved})")
+    else:
+        print(f"{old} -> {new}  (checkout stays at {path})")
+    d[new] = d.pop(old)
+    save_repos(d)
+
+
+def cmd_remove(args):
+    """Forget a store. The checkout is left alone.
+
+    ferry did not create most of what is in it and cannot know whether the
+    clone is wanted elsewhere, so it says where the directory is and leaves
+    removing it to you.
+    """
+    d = repos()
+    if args.name not in d:
+        die(f"unknown store '{args.name}' "
+            f"(have: {', '.join(sorted(d)) or 'none yet'})")
+    path = Path(d[args.name]["path"])
+    trouble = unsaved_work(path)
+    if trouble and not args.force:
+        die(f"'{args.name}' has {trouble}.\n"
+            f"       {path}\n"
+            f"       push it first, or --force to forget it anyway")
+    d.pop(args.name)
+    save_repos(d)
+    print(f"forgot {args.name}")
+    print(f"  its checkout is still at {path}")
+    print(f"  ferry add {args.name} --path {path}   to register it again")
 
 
 def cmd_stores(args):
@@ -1049,7 +1140,9 @@ NO_ARGS = {"stores"}
 NOTHING, FILES = 1, 2
 
 COMMANDS = {
-    "add":      ["--key", "--path"],
+    "add":      ["--key", "--path", "--force"],
+    "rename":   [],
+    "remove":   ["--force"],
     "stores":   [],
     "sessions": ["--global", "--all"],
     "memory":   ["--global"],
@@ -1551,8 +1644,10 @@ def tilde(path):
 
 
 USAGE = """\
-  ferry add <name> <git-url> [--key <file>] [--path <dir>]
+  ferry add <name> <git-url> [--key <file>] [--path <dir>] [--force]
   ferry stores
+  ferry rename <store> <new-name>
+  ferry remove <store> [--force]
   ferry sessions [<dir>] [--global] [--all]
   ferry memory [<dir>] [--global]
   ferry save <session> [to] <store>:<dir> [--force]
@@ -1574,6 +1669,8 @@ examples:
   register a store, once per machine
     ferry add work git@github.com:you/sessions.git --key ~/sessions.key
     ferry add work --path ~/develop/sessions      adopt a checkout you have
+    ferry rename work old-work                    same store, different name
+    ferry remove old-work                         forget it; the clone stays
     ferry stores
 
   what have I got here
@@ -1631,7 +1728,20 @@ def main():
                    help="adopt a checkout you already have")
     p.add_argument("-k", "--key", metavar="<file>",
                    help="git-crypt key to unlock it with")
+    p.add_argument("-f", "--force", action="store_true",
+                   help="replace a store of that name")
     p.set_defaults(func=cmd_add)
+
+    p = sub.add_parser("rename", help="give a store a different name")
+    p.add_argument("name", metavar="<store>")
+    p.add_argument("new", metavar="<new-name>")
+    p.set_defaults(func=cmd_rename)
+
+    p = sub.add_parser("remove", help="forget a store; its checkout stays")
+    p.add_argument("name", metavar="<store>")
+    p.add_argument("-f", "--force", action="store_true",
+                   help="forget it even with work the remote has not got")
+    p.set_defaults(func=cmd_remove)
 
     p = sub.add_parser("stores", help="the stores registered here")
     p.set_defaults(func=cmd_stores)

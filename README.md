@@ -71,8 +71,10 @@ accident.
 ## Usage
 
 ```
-ferry add <name> <git-url> [--key <file>] [--path <dir>]
+ferry add <name> <git-url> [--key <file>] [--path <dir>] [--force]
 ferry stores
+ferry rename <store> <new-name>
+ferry remove <store> [--force]
 ferry sessions [<dir>] [--global] [--all]
 ferry memory [<dir>] [--global]
 ferry save <session> [to] <store>:<dir> [--force]
@@ -92,6 +94,8 @@ ferry update [<store>]
 ```sh
 ferry add work git@github.com:you/sessions.git --key ~/sessions.key
 ferry add work --path ~/develop/sessions      # adopt a checkout you have
+ferry rename work old-work                    # same store, different name
+ferry remove old-work                         # forget it; the clone stays
 ferry stores
 
 ferry sessions                                # sessions in this directory
@@ -203,6 +207,15 @@ their full id, which is the only handle they have. `ferry sessions` says how
 many are hiding.
 
 **A store is a plain git repo.** ferry only fast-forwards; it never merges.
+
+**The registry is a list of names, and only that.** `ferry remove` forgets a
+name; it does not delete the checkout, because ferry did not put most of what
+is in there and cannot know whether you want it. It tells you where the
+directory is, and refuses outright when that directory holds something the
+remote has not got — an unpushed save, uncommitted changes, or no remote at
+all — since forgetting the name would turn those into a path you had to
+remember. `--force` overrides it. `ferry rename` takes the checkout with it
+when ferry made it, and leaves one you adopted where you put it.
 
 ## What it protects you from
 
