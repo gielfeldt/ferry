@@ -811,8 +811,38 @@ class RefuseShrink(unittest.TestCase):
 
 
 class Completion(unittest.TestCase):
-    """Candidates the shell asks for. Never reads a transcript, so it stays
-    fast enough for a TAB press."""
+    """Candidates the shell asks for.
+
+    Given a machine of its own: a store with a couple of folders, and a
+    projects tree holding one named session and one without. These used to run
+    against whatever the developer happened to have registered and skip when
+    there was nothing - which meant they tested nothing at all on CI, where
+    there never is.
+    """
+
+    def setUp(self):
+        import json as _json
+        self.store = Path(tempfile.mkdtemp())
+        for p in ("sessions/acme/bug-hunt.jsonl", "sessions/beta/deploy.jsonl",
+                  "memories/acme/note.md"):
+            (self.store / p).parent.mkdir(parents=True, exist_ok=True)
+            (self.store / p).write_text("{}\n")
+
+        self.projects = Path(tempfile.mkdtemp())
+        here = self.projects / f.slug_dir(Path.cwd()).name
+        here.mkdir(parents=True)
+        (here / "named.jsonl").write_text(_json.dumps(
+            {"type": "custom-title", "customTitle": "bug-hunt",
+             "sessionId": "named"}) + "\n")
+        (here / "nameless.jsonl").write_text(_json.dumps(
+            {"type": "user", "cwd": str(Path.cwd())}) + "\n")
+
+        self.saved = (f.repos, f.CLAUDE_PROJECTS)
+        f.repos = lambda: {"work": {"path": str(self.store)}}
+        f.CLAUDE_PROJECTS = self.projects
+
+    def tearDown(self):
+        f.repos, f.CLAUDE_PROJECTS = self.saved
 
     def complete(self, *words):
         sys.argv = ["ferry", "complete", *words]
@@ -941,9 +971,7 @@ class Completion(unittest.TestCase):
 
     def test_completion_resumes_after_the_value(self):
         got = self.complete_line("ferry load --name x ")
-        if not got:
-            self.skipTest("no store registered in this environment")
-        self.assertTrue(all(c.endswith(":") for c in got))
+        self.assertEqual(got, ["work:"])
 
     def test_sessions_completes_directories(self):
         """The argument is a directory, so the ones holding sessions are the
@@ -953,10 +981,8 @@ class Completion(unittest.TestCase):
         on CI, this position exits FILES rather than returning an empty list,
         and complete_line would raise rather than hand back nothing.
         """
-        if self.status_of("ferry sessions ") != 0:
-            self.skipTest("no sessions on this machine")
         got = self.complete_line("ferry sessions ")
-        self.assertTrue(got)
+        self.assertEqual(got, [f.tilde(str(Path.cwd()))])
         self.assertTrue(all(not c.endswith(":") for c in got))
 
     def test_move_completes(self):
@@ -966,21 +992,19 @@ class Completion(unittest.TestCase):
     def test_move_source_follows_the_memory_flag(self):
         """Like load: --memory offers folders holding memory, plain offers
         sessions. The destination is a folder either way."""
-        plain = self.complete_line("ferry move store:")
-        mem = self.complete_line("ferry move --memory store:")
-        if not plain and not mem:
-            self.skipTest("no store registered in this environment")
+        plain = self.complete_line("ferry move work:")
+        mem = self.complete_line("ferry move --memory work:")
         self.assertNotEqual(plain, mem)
+        self.assertIn("work:acme", mem)
 
     def test_memory_flag_completes(self):
         self.assertEqual(self.complete_line("ferry load --mem"), ["--memory"])
 
     def test_load_and_load_memory_are_mirror_images(self):
         """Neither should offer what the other takes."""
-        plain = self.complete_line("ferry load store:")
-        mem = self.complete_line("ferry load --memory store:")
-        if not plain and not mem:
-            self.skipTest("no store registered in this environment")
+        plain = self.complete_line("ferry load work:")
+        mem = self.complete_line("ferry load --memory work:")
+        self.assertTrue(plain and mem)
         self.assertFalse([c for c in plain if c.endswith("/memory")],
                          "plain load offered a memory directory")
         self.assertFalse([c for c in mem if c.endswith("/memory")],
