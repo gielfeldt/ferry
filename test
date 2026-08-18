@@ -1324,6 +1324,52 @@ class Completion(unittest.TestCase):
         self.assertIn(f.tilde(str(bare)),
                       self.complete_line("ferry sessions "))
 
+    def test_every_spelling_of_a_flag_reaches_completion(self):
+        """Twice now a flag has worked long and done nothing short, because
+        completion re-derives flags from the raw line rather than from
+        argparse. This walks all three spellings of the ones that change what
+        is offered."""
+        for long, short, cluster in (
+                ("ferry load --memory work:", "ferry load -m work:",
+                 "ferry load -mf work:"),
+                ("ferry list --memory work:", "ferry list -m work:", None),
+                ("ferry move --memory work:", "ferry move -m work:",
+                 "ferry move -mf work:"),
+                ("ferry save --memory to work:", "ferry save -m to work:",
+                 "ferry save -mf to work:"),
+                ("ferry export --memory ", "ferry export -m ",
+                 "ferry export -tm "),
+                ("ferry sessions --all ", "ferry sessions -a ",
+                 "ferry sessions -ag "),
+                ("ferry export --all work:", "ferry export -a work:",
+                 "ferry export -ta work:")):
+            with self.subTest(flag=long):
+                want = self.complete_line(long)
+                self.assertEqual(self.complete_line(short), want)
+                if cluster:
+                    self.assertEqual(self.complete_line(cluster), want)
+
+    def test_every_value_flag_asks_for_the_right_thing(self):
+        """--key takes a path either way it is spelled; --name takes a name
+        you are inventing, so nothing - not even a filename."""
+        for line in ("ferry add x --key ", "ferry add x -k ",
+                     "ferry add x --path ", "ferry add x -p ",
+                     "ferry export -m y --media "):
+            with self.subTest(line=line):
+                self.assertEqual(self.status_of(line), f.FILES)
+        for line in ("ferry load --name ", "ferry load -n "):
+            with self.subTest(line=line):
+                self.assertEqual(self.status_of(line), f.NOTHING)
+
+    def test_a_flag_that_changes_nothing_changes_nothing(self):
+        for plain, flagged in (("ferry load work:", "ferry load -f work:"),
+                               ("ferry load work:", "ferry load --force work:"),
+                               ("ferry export work:", "ferry export -r work:"),
+                               ("ferry export work:", "ferry export -t work:")):
+            with self.subTest(line=flagged):
+                self.assertEqual(self.complete_line(flagged),
+                                 self.complete_line(plain))
+
     def test_move_completes(self):
         self.assertEqual(self.complete_line("ferry mo"), ["move"])
         self.assertIn("--memory", self.complete_line("ferry move -"))
