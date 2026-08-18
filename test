@@ -285,6 +285,55 @@ class WhichDirectory(unittest.TestCase):
         self.assertEqual(f.session_cwd(d / "abc.jsonl"), str(started))
 
 
+class GlobalListing(unittest.TestCase):
+    """`sessions --global --all` lists sessions with no name by their id -
+    which says nothing about what they were, so the title goes beside it."""
+
+    def setUp(self):
+        import json as _json
+        self.projects = Path(tempfile.mkdtemp())
+        self.old, f.CLAUDE_PROJECTS = f.CLAUDE_PROJECTS, self.projects
+        self.where = Path(tempfile.mkdtemp()).resolve()
+        d = self.projects / f.slug_dir(self.where).name
+        d.mkdir(parents=True)
+        (d / "named.jsonl").write_text("".join(_json.dumps(r) + "\n" for r in (
+            {"type": "custom-title", "customTitle": "bug-hunt",
+             "sessionId": "named"},
+            {"type": "user", "cwd": str(self.where)})))
+        (d / "titled.jsonl").write_text("".join(_json.dumps(r) + "\n" for r in (
+            {"type": "user", "cwd": str(self.where), "aiTitle": "Fix the build"},
+            {"type": "user", "message": {"role": "user", "content": "hello"}})))
+
+    def tearDown(self):
+        f.CLAUDE_PROJECTS = self.old
+
+    def listing(self, everything):
+        buf = io.StringIO()
+        import contextlib as _c
+        with _c.redirect_stdout(buf):
+            f.sessions_everywhere(everything)
+        return buf.getvalue()
+
+    def test_an_unnamed_session_shows_what_claude_called_it(self):
+        got = self.listing(True)
+        self.assertIn("titled", got)            # the id, which is what to type
+        self.assertIn("Fix the build", got)     # and what it was about
+
+    def test_the_asterisk_is_explained_when_it_appears(self):
+        self.assertIn("not a name", self.listing(True))
+
+    def test_a_named_session_gets_no_hint(self):
+        got = self.listing(True)
+        line = [l for l in got.splitlines() if "bug-hunt" in l][0]
+        self.assertNotIn("*", line)
+
+    def test_named_only_says_nothing_about_asterisks(self):
+        got = self.listing(False)
+        self.assertIn("bug-hunt", got)
+        self.assertNotIn("not a name", got)
+        self.assertNotIn("Fix the build", got)
+
+
 class SessionDirs(unittest.TestCase):
     """`ferry export <TAB>` offers the directories that have sessions, so the
     <dir>:<name> form is discoverable rather than something you must know."""

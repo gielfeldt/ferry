@@ -203,8 +203,9 @@ they are noted where they appeared, and written out beside it with `--media`.
 ref — `save` refuses it and `<dir>:<name>` has nothing to match — so listing it
 offers you something you cannot then act on, and completion would walk you into
 directories with nothing behind them. `--all` brings them back, addressed by
-their full id, which is the only handle they have. `ferry sessions` says how
-many are hiding.
+their full id, which is the only handle they have — with whatever Claude
+called the session beside it, since an id says nothing about what it was.
+`ferry sessions` says how many are hiding.
 
 **A store is a plain git repo.** ferry only fast-forwards; it never merges.
 

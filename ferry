@@ -1691,23 +1691,36 @@ def sessions_everywhere(everything=False):
                 continue
             where = None
             for f in sorted(d.glob("*.jsonl")):
-                name = session_name(f)
+                name, hint = session_name(f), ""
                 if not name:
                     if not everything:
                         continue
+                    # The id is what you would type; the title is how you know
+                    # which one you want.
                     name = f.stem
+                    hint = ai_title(f) or first_prompt(f) or ""
+                    if len(hint) > 44:
+                        hint = hint[:43] + "\u2026"
+                    hint = f"  * {hint}" if hint else ""
                 where = where or session_cwd(f)
                 if where and Path(where).is_dir():
                     rows.append((f.stat().st_mtime, name, f.stat().st_size,
-                                 where))
+                                 where, hint))
     if not rows:
         print(f"no {'' if everything else 'named '}sessions on this machine")
         return
     width = min(max(len(r[1]) for r in rows), 36)
-    for mtime, name, size, where in sorted(rows, reverse=True):
+    paths = min(max(len(tilde(r[3])) for r in rows), 40) if any(r[4] for r in rows) else 0
+    for mtime, name, size, where, hint in sorted(rows, reverse=True):
         when = datetime.fromtimestamp(mtime).strftime("%Y-%m-%d")
-        print(f"  {name:<{width}}  {when}  {size/1e6:6.1f} MB  {tilde(where)}")
-    print("\n  read one with:  ferry export <dir>:<name>")
+        print(f"  {name:<{width}}  {when}  {size/1e6:6.1f} MB  "
+              f"{tilde(where):<{paths}}{hint}".rstrip())
+    if any(r[4] for r in rows):
+        print("\n  * a title or opening line, not a name - "
+              "the id is what to type")
+    print(f"\n  read one with:  ferry export <dir>:<name>"
+          if not any(r[4] for r in rows) else
+          "  read one with:  ferry export <dir>:<name>")
 
 
 def tilde(path):
