@@ -347,7 +347,7 @@ hand — which matters, since a transcript runs to tens of megabytes and
 `ferry export` gives you the conversation in about 1% of that.
 
 ```sh
-FERRY_SKILL=1 curl -fsSL https://raw.githubusercontent.com/gielfeldt/ferry/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/gielfeldt/ferry/main/install.sh | FERRY_SKILL=1 sh
 ```
 
 or, to have it follow a checkout:

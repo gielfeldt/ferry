@@ -1,6 +1,13 @@
 #!/bin/sh
 # curl -fsSL https://raw.githubusercontent.com/gielfeldt/ferry/main/install.sh | sh
 #
+# Settings go on the `sh`, not on the `curl`: in a pipeline a variable set
+# before a command belongs to that command alone, so `FERRY_SKILL=1 curl … | sh`
+# hands it to curl, which has no use for it. Either of these works:
+#
+#   curl -fsSL …/install.sh | FERRY_SKILL=1 sh
+#   FERRY_SKILL=1 sh -c "$(curl -fsSL …/install.sh)"
+#
 #   FERRY_REPO    owner/name to install from  (default gielfeldt/ferry)
 #   FERRY_PREFIX  where to put it             (default ~/.local/bin)
 #   FERRY_REF     a release tag               (default: the newest release)
