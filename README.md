@@ -338,6 +338,26 @@ is not - about 0.2s for 60 MB, because the name is on a line that is cheap to
 recognise. Names inside the *store* are still not offered: those files are
 encrypted, so there is nothing to read without decrypting the lot.
 
+## Telling Claude about it
+
+`skills/ferry/SKILL.md` is a Claude Code skill: it teaches Claude what ferry
+can do, so you can ask "which sessions do I have?" or "suggest names for the
+unnamed ones" and have it use the tool rather than reading transcripts by
+hand — which matters, since a transcript runs to tens of megabytes and
+`ferry export` gives you the conversation in about 1% of that.
+
+```sh
+mkdir -p ~/.claude/skills
+ln -s "$PWD/skills/ferry" ~/.claude/skills/ferry
+```
+
+A symlink so it follows the repo. It is not installed for you: putting a file
+in `~/.claude` changes what Claude does in conversations that have nothing to
+do with ferry, which is your decision rather than an installer's.
+
+The skill reads and never writes. It will tell you the `ferry save`,
+`ferry load` or `ferry name` command to run, and leave the running to you.
+
 ## Contributing
 
 Running the tests and cutting a release are covered in
