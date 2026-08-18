@@ -1192,16 +1192,20 @@ class Completion(unittest.TestCase):
 
     def test_a_path_position_asks_the_shell_for_files(self):
         """--key and --path take a path on this machine. ferry cannot know it,
-        but it can say that a filename is what belongs there."""
+        but it can say that a filename is what belongs there - typed either
+        way, since -k is the same flag as --key."""
         for line in ("ferry add x --key ", "ferry add x --path ",
-                     "ferry add x --key ~/half"):
+                     "ferry add x -k ", "ferry add x -p ",
+                     "ferry export -m y --media ",
+                     "ferry add x --key ~/half", "ferry add x -k ~/half"):
             with self.subTest(line=line):
                 self.assertEqual(self.status_of(line), f.FILES)
 
     def test_a_name_you_invent_gets_nothing_at_all(self):
         """--name is a name you are about to make up: no candidate, and no
         filename either."""
-        for line in ("ferry load --name ", "ferry load --name half-typed"):
+        for line in ("ferry load --name ", "ferry load -n ",
+                     "ferry load --name half-typed"):
             with self.subTest(line=line):
                 self.assertEqual(self.status_of(line), f.NOTHING)
 

@@ -1195,11 +1195,13 @@ def list_one(alias, path, memory):
 
 
 # Options whose value is a path on this machine.
-FILE_FLAGS = {"--key", "--path", "--media"}
+# Both spellings: completion sees the words as typed, and -k is the same
+# flag as --key. Only --media has no short form, by design.
+FILE_FLAGS = {"--key", "-k", "--path", "-p", "--media"}
 
 # Options whose value is a name you are about to invent, which nothing can
 # guess and no file will match either.
-NAME_FLAGS = {"--name"}
+NAME_FLAGS = {"--name", "-n"}
 
 # Commands that take nothing at all after them.
 NO_ARGS = {"stores"}
