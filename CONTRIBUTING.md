@@ -108,7 +108,8 @@ git push origin v1.0.1
 ```
 
 A workflow runs the tests, writes the tag's version into `ferry`, and
-publishes a release carrying `ferry`, `ferry.bash` and `ferry.zsh`. The notes
+publishes a release carrying `ferry`, `ferry.bash`, `ferry.zsh` and
+`SKILL.md`. The notes
 come from the tag's own message if it is annotated, and from the tagged commit
 otherwise.
 

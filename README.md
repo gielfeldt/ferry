@@ -347,13 +347,19 @@ hand — which matters, since a transcript runs to tens of megabytes and
 `ferry export` gives you the conversation in about 1% of that.
 
 ```sh
+FERRY_SKILL=1 curl -fsSL https://raw.githubusercontent.com/gielfeldt/ferry/main/install.sh | sh
+```
+
+or, to have it follow a checkout:
+
+```sh
 mkdir -p ~/.claude/skills
 ln -s "$PWD/skills/ferry" ~/.claude/skills/ferry
 ```
 
-A symlink so it follows the repo. It is not installed for you: putting a file
-in `~/.claude` changes what Claude does in conversations that have nothing to
-do with ferry, which is your decision rather than an installer's.
+Opt-in either way. It is not installed for you: `~/.claude` belongs to Claude
+Code, and a skill shapes what Claude does in conversations that have nothing to
+do with ferry — your decision rather than an installer's.
 
 The skill reads and never writes. It will tell you the `ferry save`,
 `ferry load` or `ferry name` command to run, and leave the running to you.

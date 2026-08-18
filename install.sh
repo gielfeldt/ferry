@@ -4,6 +4,7 @@
 #   FERRY_REPO    owner/name to install from  (default gielfeldt/ferry)
 #   FERRY_PREFIX  where to put it             (default ~/.local/bin)
 #   FERRY_REF     a release tag               (default: the newest release)
+#   FERRY_SKILL   1 to install the Claude Code skill into ~/.claude/skills
 set -eu
 
 REPO="${FERRY_REPO:-gielfeldt/ferry}"
@@ -102,6 +103,22 @@ if download "$comp_tmp" ferry.zsh; then
     esac
 fi
 rm -f "$comp_tmp"
+
+# The Claude Code skill, only when asked for. It is not put there by default:
+# ~/.claude belongs to Claude Code, and a skill shapes what Claude does in
+# conversations that have nothing to do with ferry. That is the user's call,
+# which is why it is opt-in rather than opt-out.
+if [ "${FERRY_SKILL:-}" = "1" ]; then
+    SKILLDIR="$HOME/.claude/skills/ferry"
+    skill_tmp="$(mktemp)"
+    if download "$skill_tmp" SKILL.md; then
+        mkdir -p "$SKILLDIR" && mv "$skill_tmp" "$SKILLDIR/SKILL.md" \
+            && echo "  claude skill    -> $SKILLDIR/SKILL.md"
+    else
+        echo "  $REF has no skill to install (added after 1.2.0)" >&2
+        rm -f "$skill_tmp"
+    fi
+fi
 
 case ":${PATH:-}:" in
     *":$PREFIX:"*) ;;
