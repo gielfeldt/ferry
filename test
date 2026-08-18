@@ -333,6 +333,33 @@ class WhichDirectory(unittest.TestCase):
         d.mkdir()
         self.assertIsNone(f.from_slug(f.slug_dir(d).name))
 
+    def test_a_path_is_slugged_once_however_often_it_appears(self):
+        """Slugging resolves a path on the filesystem. A transcript records its
+        cwd on thousands of lines and holds a handful of distinct ones, so
+        doing it per line was 6763 lookups where 9 would do - which on a
+        machine whose home is not local reads as a hang."""
+        import json as _json
+        projects = Path(tempfile.mkdtemp())
+        home = Path(tempfile.mkdtemp()).resolve()
+        elsewhere, here = home / "elsewhere", home / "here"
+        elsewhere.mkdir(); here.mkdir()
+        d = projects / f.slug_dir(here).name
+        d.mkdir(parents=True)
+        # the wanted path appears only at the end, after many that do not match
+        lines = [{"type": "user", "cwd": str(elsewhere)}] * 500
+        lines.append({"type": "user", "cwd": str(here)})
+        (d / "a.jsonl").write_text("".join(_json.dumps(r) + "\n" for r in lines))
+
+        calls = []
+        real = f.slug_dir
+        f.slug_dir = lambda p=None: (calls.append(str(p)), real(p))[1]
+        try:
+            got = f.session_cwd(d / "a.jsonl")
+        finally:
+            f.slug_dir = real
+        self.assertEqual(got, str(here))
+        self.assertEqual(len(calls), 2)      # two distinct paths, not 501
+
     def test_the_directory_shown_is_the_one_the_file_is_filed_under(self):
         """A session can cd. Its last cwd is then not where its transcript
         lives, and printing that gives you a ref that cannot resolve."""

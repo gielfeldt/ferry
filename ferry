@@ -1634,7 +1634,7 @@ def session_cwd(jsonl):
     resolve - one such session on this machine ends in ~/develop/…/personal
     while its transcript sits under the slug for …/test.
     """
-    want = jsonl.parent.name
+    want, tried = jsonl.parent.name, set()
     try:
         with jsonl.open(errors="replace") as fh:
             for line in fh:
@@ -1644,6 +1644,15 @@ def session_cwd(jsonl):
                     c = json.loads(line).get("cwd")
                 except json.JSONDecodeError:
                     continue
+                # Each distinct path once. A transcript records its cwd on
+                # thousands of lines but only ever holds a handful of different
+                # ones, and slugging a path resolves it on the filesystem - so
+                # not doing that repeatedly is the difference between 9 calls
+                # and 6763. On a machine where a home directory is not local,
+                # the second version reads as a hang.
+                if c in tried:
+                    continue
+                tried.add(c)
                 # The first one that slugs back is enough: any that does names
                 # this same directory, and stopping there reads the head of a
                 # file rather than all of it, which is what makes listing every
