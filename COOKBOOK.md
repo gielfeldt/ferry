@@ -10,6 +10,7 @@ Worked examples. Each one stands alone; skip to the situation you are in.
 - [Keep work and personal apart](#keep-work-and-personal-apart)
 - [See what a store holds without changing anything](#see-what-a-store-holds-without-changing-anything)
 - [Read a session](#read-a-session)
+- [Name a session you never named](#name-a-session-you-never-named)
 - [Rename a session](#rename-a-session)
 - [Reorganise a store](#reorganise-a-store)
 - [Upgrading a store from before 1.2](#upgrading-a-store-from-before-12)
@@ -224,6 +225,53 @@ ferry export bug-hunt --raw > bug-hunt.jsonl
 That is byte-for-byte the transcript. From a store it is the decrypted
 transcript, which is the one place store contents leave the store in the
 clear - fine on your own machine, worth knowing before piping it anywhere.
+
+## Name a session you never named
+
+An unnamed session cannot be saved — there would be nothing to call it — and
+it is not listed by default, since there is no ref that would reach it. To find
+them:
+
+```sh
+ferry sessions --all                 # here
+ferry sessions --global --all        # everywhere, with what Claude called each
+```
+
+The listing shows Claude's own title beside the id, marked `*`, which is often
+enough to know what you are looking at:
+
+```
+1b94d02f-8c81-4740-adc2-3da7052d0a4a  2026-08-15  3.3 MB  ~/develop/acme  * Vurdér readiness for PR #3 merge
+```
+
+Then name it, without opening it:
+
+```sh
+ferry name 1b94d02f pr-3-readiness
+ferry save pr-3-readiness to work:acme
+```
+
+`ferry name` appends the same record `/rename` writes, so the session answers
+to it immediately — `claude --resume pr-3-readiness` — and the name travels
+with the transcript to any machine.
+
+### When the title says nothing
+
+Some sessions have no title and open with something unhelpful ("can you resume
+this session?"). Read it, or ask for a suggestion — `export` produces exactly
+the input for that:
+
+```sh
+ferry export ~/develop/acme:94f88b85 | less
+
+ferry export ~/develop/acme:94f88b85 |
+    claude -p "suggest a short kebab-case name for this session, name only"
+```
+
+ferry does not call a model itself: it has no API keys, no network of its own,
+and a listing that quietly cost money would be a poor listing. Piping keeps the
+choice of model, prompt and cost yours — and `--tools` is there if the
+conversation only makes sense with what it ran.
 
 ## Rename a session
 

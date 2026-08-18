@@ -76,6 +76,7 @@ ferry stores
 ferry rename <store> <new-name>
 ferry remove <store> [--force]
 ferry sessions [<dir>] [--global] [--all]
+ferry name <session>|<dir>:<session> <name>
 ferry memory [<dir>] [--global]
 ferry save <session> [to] <store>:<dir> [--force]
 ferry save --memory [to] <store>:<dir> [--force]
@@ -102,6 +103,7 @@ ferry sessions                                # sessions in this directory
 ferry sessions --global                       # every named session, and where
 ferry sessions --all                          # unnamed ones too, listed by id
 ferry sessions ~/develop/acme                 # another directory, same rules
+ferry name 6af148fd deploy-fix                # name one without resuming it
 ferry memory                                  # notes in this directory
 ferry memory ~/develop/acme                   # notes in another
 ferry memory --global                         # every directory that remembers
@@ -144,6 +146,11 @@ The name comes from `/rename`, `/branch` or `claude -n`, and is recorded inside
 the transcript — so it travels with the session, and a loaded one answers to it
 straight away. A session with no name cannot be saved; there would be nothing to
 call it.
+
+`ferry name` sets one without resuming the session, by appending the record
+Claude Code would have written — which matters for an old conversation you want
+to file but not reopen. Local sessions only: in a store the file *is* named
+after the session, so naming one there would leave the two disagreeing.
 
 **`load` takes a whole path**, because there you are choosing among what the
 store holds rather than deciding where something goes.

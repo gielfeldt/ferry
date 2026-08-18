@@ -975,6 +975,45 @@ def strip_frontmatter(text):
     return text[end + 4:] if end != -1 else text
 
 
+def cmd_name(args):
+    """Give a session a name, without resuming it to type /rename.
+
+    The name is a record in the transcript, which is why it travels with the
+    file - so setting one is a matter of appending the record Claude Code
+    would have written. That is the only way to name a session you do not want
+    to open: an unnamed 12 MB conversation cannot be saved, and until now the
+    only way to fix that was to start it up again.
+
+    Local sessions only. In a store the file is named after the session, so
+    naming one there would leave the two disagreeing - which is the thing
+    `move` refuses to do for the same reason.
+    """
+    if ":" in args.session and args.session.partition(":")[0] in repos():
+        die("a session in a store cannot be named here - its filename is its "
+            "name.\n       load it, name it, and save it again")
+
+    src = export_source(args.session)
+    name = args.new
+    if not name or name.startswith((".", "-")) or set("/:") & set(name):
+        die("a session name becomes a filename in a store, so it cannot hold "
+            "'/' or ':', or begin with '.' or '-'")
+
+    was = session_name(src)
+    if was == name:
+        die(f"{name} is already its name")
+    taken = names_here(src.parent).get(name)
+    if taken and taken != src:
+        die(f"'{name}' is already the name of {taken.stem} in that directory.\n"
+            f"       names have to be unique there, or a ref would mean two "
+            f"things")
+
+    with src.open("a") as fh:
+        fh.write(json.dumps({"type": "custom-title", "customTitle": name,
+                             "sessionId": src.stem}) + "\n")
+    print(f"{was or src.stem} -> {name}")
+    print(f"  claude --resume {name}")
+
+
 def cmd_export(args):
     """Print a session: as markdown, or exactly as it is on disk."""
     if args.memory:
@@ -1225,6 +1264,7 @@ COMMANDS = {
     "load":     ["--memory", "--force", "--name"],
     "move":     ["--memory", "--force"],
     "export":   ["--tools", "--media", "--raw", "--all", "--memory"],
+    "name":     [],
     "list":     ["--memory"],
     "update":   [],
 }
@@ -1388,6 +1428,22 @@ def cmd_complete(args):
                 out = store_refs(cur)
                 if len(prev) == (2 if memory else 3) and "to".startswith(cur):
                     out.append("to")
+        elif cmd == "name":
+            # What is here, named or not - naming an unnamed one is the point.
+            # The second word is a name you are inventing, so nothing.
+            if len(prev) == 2:
+                head, sep, tail = cur.partition(":")
+                if sep:
+                    where = Path(os.path.expanduser(head))
+                    out = [f"{head}:{n}"
+                           for n in sorted(refs_in(slug_dir(where), True))
+                           if n.startswith(tail)] if where.is_dir() else []
+                elif cur.startswith(("~", "/", ".")) or "/" in cur:
+                    out = [d for d in dir_refs(everything=True)
+                           if d.startswith(cur)]
+                else:
+                    out = sorted(n for n in refs_in(slug_dir(), True)
+                                 if n.startswith(cur))
         elif cmd == "export":
             if len(prev) == 2 and given(words, "--memory", "-m"):
                 head, sep, tail = cur.partition(":")
@@ -1735,6 +1791,7 @@ USAGE = """\
   ferry rename <store> <new-name>
   ferry remove <store> [--force]
   ferry sessions [<dir>] [--global] [--all]
+  ferry name <session>|<dir>:<session> <name>
   ferry memory [<dir>] [--global]
   ferry save <session> [to] <store>:<dir> [--force]
   ferry save --memory [to] <store>:<dir> [--force]
@@ -1764,6 +1821,7 @@ examples:
     ferry sessions --global                       everywhere, and where each is
     ferry sessions --all                          unnamed ones too, by id
     ferry sessions ~/develop/acme                 another directory
+    ferry name 6af148fd deploy-fix                name one without resuming it
     ferry memory                                  notes here
     ferry memory --global                         everywhere that remembers
 
@@ -1876,6 +1934,11 @@ def main():
     p.add_argument("-f", "--force", action="store_true",
                    help="replace whatever is already at the destination")
     p.set_defaults(func=cmd_move)
+
+    p = sub.add_parser("name", help="name a session without resuming it")
+    p.add_argument("session", metavar="<session>|<dir>:<session>")
+    p.add_argument("new", metavar="<name>")
+    p.set_defaults(func=cmd_name)
 
     p = sub.add_parser("export", help="print a session as markdown")
     p.add_argument("session", metavar="<session>|<store>:<path>")

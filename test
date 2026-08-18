@@ -137,6 +137,70 @@ class NoteDescription(unittest.TestCase):
         self.assertEqual(f.note_description(Path("/nonexistent/x.md")), "")
 
 
+class Naming(unittest.TestCase):
+    """Setting a session's name without resuming it to type /rename."""
+
+    def setUp(self):
+        import json as _json
+        self.projects = Path(tempfile.mkdtemp())
+        self.old, f.CLAUDE_PROJECTS = f.CLAUDE_PROJECTS, self.projects
+        self.where = Path(tempfile.mkdtemp()).resolve()
+        self.d = self.projects / f.slug_dir(self.where).name
+        self.d.mkdir(parents=True)
+        (self.d / "abc.jsonl").write_text(_json.dumps(
+            {"type": "user", "cwd": str(self.where)}) + "\n")
+        (self.d / "def.jsonl").write_text(_json.dumps(
+            {"type": "custom-title", "customTitle": "taken",
+             "sessionId": "def"}) + "\n")
+        self.saved_repos = f.repos
+        f.repos = lambda: {"work": {"path": "/nowhere"}}
+
+    def tearDown(self):
+        f.CLAUDE_PROJECTS = self.old
+        f.repos = self.saved_repos
+
+    def args(self, session, new):
+        return type("A", (), {"session": session, "new": new})()
+
+    def test_naming_makes_the_session_answer_to_it(self):
+        with quiet():
+            f.cmd_name(self.args(f"{self.where}:abc", "build-fix"))
+        self.assertEqual(f.session_name(self.d / "abc.jsonl"), "build-fix")
+
+    def test_the_record_is_appended_not_rewritten(self):
+        """Claude Code appends to this file too, so nothing may be rewritten
+        underneath it."""
+        before = (self.d / "abc.jsonl").read_text()
+        with quiet():
+            f.cmd_name(self.args(f"{self.where}:abc", "build-fix"))
+        self.assertTrue((self.d / "abc.jsonl").read_text().startswith(before))
+
+    def test_a_name_taken_in_that_directory_is_refused(self):
+        """Names are unique within a directory, or a ref means two things."""
+        with quiet() as (_, err), self.assertRaises(SystemExit):
+            f.cmd_name(self.args(f"{self.where}:abc", "taken"))
+        self.assertIn("already the name", err.getvalue())
+
+    def test_naming_it_what_it_is_called_is_refused(self):
+        with quiet():
+            f.cmd_name(self.args(f"{self.where}:abc", "x"))
+        with quiet(), self.assertRaises(SystemExit):
+            f.cmd_name(self.args(f"{self.where}:abc", "x"))
+
+    def test_a_name_that_would_break_a_ref_is_refused(self):
+        """It becomes a filename in a store, and half of a <dir>:<name>."""
+        for bad in ("a/b", "x:y", ".hidden", ""):
+            with self.subTest(bad=bad), quiet(), self.assertRaises(SystemExit):
+                f.cmd_name(self.args(f"{self.where}:abc", bad))
+
+    def test_a_session_in_a_store_is_refused(self):
+        """There the filename is the name; changing one would leave the two
+        disagreeing, which is what `move` refuses to do."""
+        with quiet() as (_, err), self.assertRaises(SystemExit):
+            f.cmd_name(self.args("work:acme/bug-hunt", "other"))
+        self.assertIn("filename is its name", err.getvalue())
+
+
 class Export(unittest.TestCase):
     """Rendering a transcript as markdown. What it leaves out matters as much
     as what it keeps: tool results are most of a real session's bytes."""
