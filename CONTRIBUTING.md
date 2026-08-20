@@ -39,8 +39,8 @@ Several tests skip when there is no registered store or no sessions, and it is
 easy to write one that quietly depends on yours - it passes for you and fails
 on CI, where neither exists, and it has failed a release before now.
 
-Needs python3, and `bash` for the handful that run the completion script for
-real. Nothing else: no network, no git repo, no store, and never your actual
+Needs python3, and `bash` and `zsh` for the handful that run the completion
+scripts for real. Nothing else: no network, no git repo, no store, and never your actual
 `~/.claude` — anything that would need one builds a temporary copy, and the
 few that want a registered store skip when there is none.
 
@@ -72,6 +72,12 @@ under **every** bash on the machine rather than the first on `PATH`, because
 bash 3.2 and bash 5 disagree about quoting inside a parameter expansion, and
 testing only the newer one is how a 3.2 bug ships from a machine where bash 5
 comes first.
+
+zsh gets less: a real `compinit` is run over the script to check it registers
+against the ferry command, and `zsh -n` parses it, but nothing drives the
+candidates through it the way the bash tests do. That much exists because the
+script shipped with `#compdef ferry` on line 3 rather than line 1 - compinit
+reads the first line and no further - and no test could see it.
 
 ## Completion
 

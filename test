@@ -1005,6 +1005,148 @@ class BashCompletion(unittest.TestCase):
         self.assertEqual(n, 0)
 
 
+class ZshCompletion(unittest.TestCase):
+    """The zsh script, run by a real zsh.
+
+    It had never run at all. It shipped with `#compdef ferry` on line 3 behind
+    two comment lines - compinit reads the first line of an `_*` file and no
+    further, so nothing was ever bound to the ferry command - and behind that,
+    `local raw status`: zsh keeps `status` read-only as a synonym for `$?`, so
+    the function aborted on its second line. Two bugs, both invisible to
+    reading, neither reachable by any Python test.
+    """
+
+    SCRIPT = FERRY.parent / "completions" / "ferry.zsh"
+
+    # compadd takes array *names*, so the stub has to expand them; -S '' is how
+    # the script says "no space after this one".
+    DRIVER = """
+compadd() {
+    local nospace=0 name=""
+    while (( $# )); do
+        case $1 in
+            -S) nospace=1; shift 2 ;;
+            -a) name=$2; shift 2 ;;
+            *) shift ;;
+        esac
+    done
+    local i
+    for i in ${(P)name}; do print -r -- "$nospace $i"; done
+}
+_files() { print -r -- "FILES" }
+BUFFER=$1
+. $2
+print -r -- "RC=$?"
+"""
+
+    def zsh(self):
+        z = shutil.which("zsh") or "/bin/zsh"
+        if not os.access(z, os.X_OK):
+            self.skipTest("no zsh")
+        if not self.SCRIPT.exists():
+            self.skipTest("no completion script")
+        return z
+
+    def complete(self, line, candidates, exit=0):
+        """What _ferry offers, with `ferry complete` stubbed out.
+
+        Returns (rc, [(nospace, candidate)], stderr) - stderr matters here,
+        because the read-only-status bug showed up only as a message.
+        """
+        z = self.zsh()
+        d = Path(tempfile.mkdtemp())
+        (d / "driver.zsh").write_text(self.DRIVER)
+        stub = d / "ferry"
+        stub.write_text("#!/bin/sh\n" +
+                        ("printf '%s\\n' " +
+                         " ".join(f"'{c}'" for c in candidates) + "\n"
+                         if candidates else "") +
+                        f"exit {exit}\n")
+        stub.chmod(0o755)
+        r = subprocess.run(
+            [z, "-f", str(d / "driver.zsh"), line, str(self.SCRIPT)],
+            capture_output=True, text=True,
+            env=dict(os.environ, PATH=f"{d}:{os.environ['PATH']}"))
+        added, rc = [], None
+        for l in r.stdout.splitlines():
+            if l.startswith("RC="):
+                rc = int(l[3:])
+            elif l == "FILES":
+                added.append((None, "FILES"))
+            elif l:
+                n, _, c = l.partition(" ")
+                added.append((int(n), c))
+        return rc, added, r.stderr
+
+    def test_the_function_runs_without_complaint(self):
+        """The whole of what the read-only `status` bug looked like: a message
+        on stderr and not one candidate."""
+        rc, added, err = self.complete("ferry sess", ["sessions"])
+        self.assertEqual(err, "")
+        self.assertEqual(added, [(0, "sessions")])
+
+    def test_compinit_registers_the_function(self):
+        """Installed under fpath as `_ferry`, compinit has to bind it to the
+        ferry command - the whole of what installing it is for."""
+        z, d = self.zsh(), Path(tempfile.mkdtemp())
+        (d / "sf").mkdir()
+        shutil.copy(self.SCRIPT, d / "sf" / "_ferry")
+        r = subprocess.run(
+            [z, "-f", "-c",
+             f'fpath=({d}/sf $fpath); autoload -Uz compinit; '
+             f'compinit -u -d {d}/dump; print -r -- "${{_comps[ferry]:-none}}"'],
+            capture_output=True, text=True)
+        self.assertEqual(r.stdout.strip(), "_ferry",
+                         "compinit did not bind ferry: " + r.stderr)
+
+    def test_the_compdef_tag_is_the_first_line(self):
+        """Said plainly, so the reason survives an edit to the header."""
+        self.assertEqual(self.SCRIPT.read_text().splitlines()[0],
+                         "#compdef ferry")
+
+    def test_a_folder_is_offered_without_a_space(self):
+        """So the next TAB can carry on into it."""
+        _, added, _ = self.complete("ferry load private:",
+                                    ["private:acme/", "private:widgets/"])
+        self.assertEqual(added, [(1, "private:acme/"), (1, "private:widgets/")])
+
+    def test_a_store_name_is_offered_without_one_either(self):
+        """`store:` is a store waiting for a path, not a finished word."""
+        _, added, _ = self.complete("ferry load --memory pri", ["private:"])
+        self.assertEqual(added, [(1, "private:")])
+
+    def test_a_finished_ref_gets_the_cursor_moved_on(self):
+        _, added, _ = self.complete("ferry load private:acme/b",
+                                    ["private:acme/bug-hunt"])
+        self.assertEqual(added, [(0, "private:acme/bug-hunt")])
+
+    def test_the_two_kinds_are_added_separately(self):
+        """One compadd call cannot say both, so a mixed list has to split."""
+        _, added, _ = self.complete(
+            "ferry load private:a", ["private:acme/", "private:agenda"])
+        self.assertEqual(sorted(added), [(0, "private:agenda"),
+                                        (1, "private:acme/")])
+
+    def test_exit_two_hands_over_to_filenames(self):
+        _, added, _ = self.complete("ferry add x --key ", [], exit=2)
+        self.assertEqual(added, [(None, "FILES")])
+
+    def test_exit_one_offers_nothing_at_all(self):
+        rc, added, _ = self.complete("ferry zzz ", [], exit=1)
+        self.assertEqual((rc, added), (1, []))
+
+    def test_an_empty_list_is_not_an_error(self):
+        rc, added, err = self.complete("ferry load private:zz", [], exit=0)
+        self.assertEqual(added, [])
+        self.assertEqual(err, "")
+
+    def test_the_script_parses(self):
+        z = self.zsh()
+        r = subprocess.run([z, "-n", str(self.SCRIPT)],
+                           capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stderr)
+
+
 class StoreRefs(unittest.TestCase):
     """Completion walks the store one level at a time. Offering every path at
     once buried the answer in everything the store had ever held - 57 lines to
