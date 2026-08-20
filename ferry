@@ -349,21 +349,45 @@ def note_description(md):
 
 
 def session_id_of(jsonl):
-    """The session id recorded inside a transcript."""
+    """The id a transcript is currently recorded under.
+
+    The last one, not the first. Resuming a session opens the new transcript
+    with the record the old one was interrupted on, and that record still
+    carries the old id - so the first id in a resumed transcript names its
+    parent. Claude Code agrees: the id it writes into that opening record is
+    always the parent's *last* id, which is how the chain refers to itself.
+
+    Taking the first id named a loaded session after its parent, landing it on
+    the parent's transcript; and because the child is the larger file, the
+    shrink check waved the overwrite straight through.
+
+    Compacting does not change the id: it appends an isCompactSummary record to
+    the same transcript, and every one of those carries the file's own id -
+    checked across nine versions of Claude Code, one file having been compacted
+    nine times.
+
+    Progress and sidechain records are skipped as subagent traffic. Every such
+    record seen so far carries the session's own id too, so skipping them
+    changes no answer today - but they describe work done on the session's
+    behalf rather than whose transcript this is, which is not a distinction
+    worth betting on.
+    """
+    sid = None
     try:
         with jsonl.open(errors="replace") as fh:
             for line in fh:
                 if '"sessionId"' not in line:
                     continue
                 try:
-                    sid = json.loads(line).get("sessionId")
+                    record = json.loads(line)
                 except json.JSONDecodeError:
                     continue
-                if sid:
-                    return sid
+                if record.get("isSidechain") or record.get("type") == "progress":
+                    continue
+                sid = record.get("sessionId") or sid
     except OSError:
         pass
-    return None
+    return sid
 
 
 # ------------------------------------------------------------------ copying

@@ -1243,6 +1243,45 @@ class TranscriptFields(unittest.TestCase):
         p = tmpfile('not json at all\n{"sessionId":"abc-123"}\n')
         self.assertEqual(f.session_id_of(p), "abc-123")
 
+    def test_a_resumed_transcript_is_not_its_parent(self):
+        """Resuming opens the new transcript with the record the old one was
+        interrupted on, which still carries the old id. Reading the first id
+        named a loaded session after its parent - and landed it on the
+        parent's file, which the shrink check let past because the child is
+        the larger of the two."""
+        p = tmpfile('{"sessionId":"parent-1","type":"user",'
+                    '"message":"[Request interrupted by user for tool use]"}\n'
+                    '{"sessionId":"child-2","type":"user"}\n'
+                    '{"sessionId":"child-2","type":"assistant"}\n')
+        self.assertEqual(f.session_id_of(p), "child-2")
+
+    def test_a_subagent_is_not_the_session(self):
+        """Sidechains are subagents with ids of their own, and one can be the
+        last thing in the file."""
+        p = tmpfile('{"sessionId":"mine-1","type":"user"}\n'
+                    '{"sessionId":"sub-9","type":"user","isSidechain":true}\n')
+        self.assertEqual(f.session_id_of(p), "mine-1")
+
+    def test_progress_records_do_not_count_either(self):
+        p = tmpfile('{"sessionId":"mine-1","type":"user"}\n'
+                    '{"sessionId":"sub-9","type":"progress"}\n')
+        self.assertEqual(f.session_id_of(p), "mine-1")
+
+    def test_compacting_does_not_change_the_id(self):
+        """Compacting appends a summary to the same transcript under the same
+        id - it does not start a new session. Worth pinning, because if it ever
+        did, the last id would stop being the session's own."""
+        p = tmpfile('{"sessionId":"mine-1","type":"user"}\n'
+                    '{"sessionId":"mine-1","type":"user","isCompactSummary":true}\n'
+                    '{"sessionId":"mine-1","type":"assistant"}\n')
+        self.assertEqual(f.session_id_of(p), "mine-1")
+
+    def test_a_chain_of_resumes_still_lands_on_the_last(self):
+        p = tmpfile('{"sessionId":"a","type":"user"}\n'
+                    '{"sessionId":"b","type":"user"}\n'
+                    '{"sessionId":"c","type":"user"}\n')
+        self.assertEqual(f.session_id_of(p), "c")
+
     def test_finds_the_session_name(self):
         p = tmpfile('{"type":"mode"}\n'
                     '{"type":"custom-title","customTitle":"bug-hunt"}\n')

@@ -357,6 +357,60 @@ Check it before pushing with `git status` and `ferry list work` — the listing
 should be identical to the one you got before, dates included. Nothing in
 `~/.claude` is touched, and the old paths stay in git history either way.
 
+## Sessions loaded under the wrong id, before 1.3.3
+
+Up to 1.3.2, `ferry load` took the **first** session id inside a transcript.
+That is right for most sessions and wrong for a resumed one: resuming opens the
+new transcript with the record the old one was interrupted on, and that record
+still carries the old id. So a resumed session was loaded under its *parent's*
+id — landing on the parent's transcript, and, because the child is the larger
+file, sailing straight past the shrink check that exists to stop exactly that.
+
+Upgrade first, then check each machine. This reads only, and changes nothing:
+
+```sh
+python3 - <<'EOF'
+import json, pathlib
+root = pathlib.Path.home() / ".claude/projects"
+for f in sorted(root.glob("*/*.jsonl")):
+    sid = None
+    for line in open(f, errors="replace"):
+        if '"sessionId"' not in line:
+            continue
+        try:
+            r = json.loads(line)
+        except ValueError:
+            continue
+        if r.get("isSidechain") or r.get("type") == "progress":
+            continue
+        sid = r.get("sessionId") or sid
+    if sid and sid != f.stem:
+        print(f"{f}\n  should be {sid}.jsonl")
+EOF
+```
+
+Silence means nothing to do. For anything it prints, look at the name it wants
+before moving anything:
+
+```sh
+ls ~/.claude/projects/<dir>/<the-id-it-named>.jsonl
+```
+
+If that file **does not exist**, rename the mis-named one onto it:
+
+```sh
+mv ~/.claude/projects/<dir>/<wrong>.jsonl \
+   ~/.claude/projects/<dir>/<right>.jsonl
+```
+
+If it **does** exist, stop — that is the session the mis-load was named after,
+and overwriting it repeats the original bug. Load the store copy again with a
+fixed ferry, which now writes the right name, and delete the stale file once
+you can see both.
+
+Compacting is not affected and never was: it appends a summary to the same
+transcript under the same id, rather than starting a new session.
+
 ## When save refuses
 
 **"has no name, and the name is what it would be filed under"** — the session
