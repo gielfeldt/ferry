@@ -199,8 +199,15 @@ one holding less, so there is no direction to get wrong and no flag to get
 wrong either.
 
 When each copy holds something the other does not, neither can be written
-without dropping it, and `sync` says so and stops. That is the only case it
-will not handle, and it is the case worth stopping for.
+without dropping something — so `sync` writes a third thing instead: every
+record either copy had, this one’s first and the other’s appended. Nothing is
+chosen between, and the result is checked to hold both before it replaces
+anything.
+
+`parentUuid` is never rewritten, so both branches keep pointing at the record
+they actually followed. That is a shape Claude Code already reads: it is what
+a rewind or an edited turn produces, and most transcripts on a working machine
+hold one.
 
 **`move` re-files, it does not rename.** It takes a path and a directory, and
 the leaf goes along unchanged. A session's name lives inside its transcript, so
@@ -329,11 +336,14 @@ your clone has diverged.
 
 ## Limitations
 
-- **No merging.** `sync` copies whole, in whichever direction loses nothing.
-  When both copies have moved it stops and says so, and there is no flag to
-  make it choose — a forked session cannot be moved through ferry at all until
-  merging exists. Both copies keep everything they had; `ferry export` reads
-  either one.
+- **Merging is a join, not a resolution.** When both copies have moved, `sync`
+  keeps every record either had and pushes the result. It never picks between
+  them, so nothing is lost — but a session worked on in two places ends up
+  holding both branches, which is what Claude Code writes for a rewind anyway.
+- **Memory is not joined.** A transcript is a list of records, so two copies
+  can be put together; a note is prose, and two versions of one note have no
+  join that is not a guess at what you meant. A note edited in both places
+  stops the sync and says which.
 - **Memory is replaced wholesale**, so a note is compared by its name and its
   contents together. A note edited on both machines is a fork, and stops the
   sync rather than being merged.

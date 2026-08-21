@@ -15,8 +15,9 @@ script that CI can skip.
 import contextlib
 import importlib.util
 import io
-import re
+import json
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -1868,17 +1869,94 @@ class ListSymmetry(unittest.TestCase):
         self.assertNotIn("s:bug-hunt:", out)
 
 
+class Merge(unittest.TestCase):
+    """Joining two copies that have each moved.
+
+    The promise is the same one the comparison makes: a copy is never replaced
+    by one holding less. A join holds everything both had, so it keeps that
+    promise on both sides at once - which is why it belongs to sync rather than
+    to a command you would have to know the state to reach for.
+    """
+
+    SHARED = ('{"parentUuid":null,"sessionId":"s","type":"user","uuid":"a"}\n'
+              '{"parentUuid":"a","sessionId":"s","type":"user","uuid":"b"}\n')
+
+    def two(self, mine, theirs):
+        return (tmpfile(self.SHARED + mine, name="s"),
+                tmpfile(self.SHARED + theirs, name="s"))
+
+    def test_it_holds_everything_both_had(self):
+        ours, theirs = self.two('{"uuid":"L"}\n', '{"uuid":"R"}\n')
+        before = f.line_set(ours)
+        f.merge_into(ours, theirs)
+        joined = f.line_set(ours)
+        self.assertEqual(f.relation(joined, before), f.AHEAD)
+        self.assertEqual(f.relation(joined, f.line_set(theirs)), f.AHEAD)
+
+    def test_it_reports_what_it_gained(self):
+        ours, theirs = self.two('{"uuid":"L"}\n', '{"uuid":"R"}\n{"uuid":"R2"}\n')
+        self.assertEqual(f.merge_into(ours, theirs), 2)
+
+    def test_this_copy_stays_at_the_front(self):
+        """Appending, not rewriting: the file opens with every byte that was
+        already here, so a session that loads keeps loading."""
+        ours, theirs = self.two('{"uuid":"L"}\n', '{"uuid":"R"}\n')
+        was = ours.read_bytes()
+        f.merge_into(ours, theirs)
+        self.assertTrue(ours.read_bytes().startswith(was))
+
+    def test_parent_uuids_are_left_alone(self):
+        """Both sides of the branch keep pointing at what they followed - that
+        is what makes the result a shape Claude Code already reads."""
+        ours, theirs = self.two('{"parentUuid":"b","uuid":"L"}\n',
+                                '{"parentUuid":"b","uuid":"R"}\n')
+        f.merge_into(ours, theirs)
+        parents = [json.loads(l).get("parentUuid")
+                   for l in ours.read_text().splitlines() if l.strip()]
+        self.assertEqual(parents.count("b"), 2)
+
+    def test_nothing_is_added_twice(self):
+        ours, theirs = self.two('{"uuid":"L"}\n', '{"uuid":"L"}\n')
+        self.assertEqual(f.merge_into(ours, theirs), 0)
+
+    def test_a_repeated_record_is_not_multiplied(self):
+        """Metadata repeats verbatim through a session. Joining must not turn
+        three of a line here and five there into eight."""
+        ours, theirs = self.two('{"type":"mode"}\n' * 3, '{"type":"mode"}\n' * 5)
+        f.merge_into(ours, theirs)
+        self.assertEqual(ours.read_text().count('{"type":"mode"}'), 3)
+
+    def test_a_missing_final_newline_does_not_join_two_records(self):
+        ours = tmpfile(self.SHARED + '{"uuid":"L"}', name="s")
+        theirs = tmpfile(self.SHARED + '{"uuid":"R"}\n', name="s")
+        f.merge_into(ours, theirs)
+        for line in ours.read_text().splitlines():
+            if line.strip():
+                json.loads(line)          # every line still parses on its own
+
+    def test_the_check_runs_before_anything_is_replaced(self):
+        """A join is the one thing ferry writes that neither machine had, so a
+        bug in it must not be able to land."""
+        ours, theirs = self.two('{"uuid":"L"}\n', '{"uuid":"R"}\n')
+        was = ours.read_bytes()
+        real = f.merge_transcripts
+        f.merge_transcripts = lambda a, b: (["{}\n"], 1)   # drops everything
+        try:
+            with quiet(), self.assertRaises(SystemExit):
+                f.merge_into(ours, theirs)
+        finally:
+            f.merge_transcripts = real
+        self.assertEqual(ours.read_bytes(), was)
+
+    def test_it_leaves_no_working_file_behind(self):
+        ours, theirs = self.two('{"uuid":"L"}\n', '{"uuid":"R"}\n')
+        f.merge_into(ours, theirs)
+        self.assertEqual(list(ours.parent.glob("*.new")), [])
+
+
 class ForkMessages(unittest.TestCase):
-    """What a refusal says. It is the only output of a sync that stops, so it
-    has to say enough to act on - and nothing that is untrue."""
-
-    def test_a_session_fork_counts_both_sides(self):
-        msg = f.fork_message("work:acme/bug-hunt", {1, 2}, {3})
-        self.assertIn("2 records the store does not have", msg)
-        self.assertIn("1 record this directory does not have", msg)
-
-    def test_one_record_is_not_plural(self):
-        self.assertIn("1 record the store", f.fork_message("x", {1}, {2}))
+    """What memory says when it will not join. Sessions are joined instead, so
+    this is the only refusal left, and it has to say enough to act on."""
 
     def test_a_note_changed_on_both_sides_is_not_called_missing(self):
         """It is in the store - it just says something else. Reporting that as
@@ -1907,10 +1985,11 @@ class ForkMessages(unittest.TestCase):
         msg = f.memory_fork_message("mem", ours, {("x.md", "h")})
         self.assertIn("and more", msg)
 
-    def test_both_say_why_nothing_was_copied(self):
-        for msg in (f.fork_message("x", {1}, {2}),
-                    f.memory_fork_message("x", {("a", "1")}, {("a", "2")})):
-            self.assertIn("losing what is only on one side", msg)
+    def test_it_says_why_a_note_is_not_joined(self):
+        """A transcript is joined; a note cannot be, and the message has to
+        say which of those you are looking at."""
+        msg = f.memory_fork_message("x", {("a", "1")}, {("a", "2")})
+        self.assertIn("no join that is not a guess", msg)
 
 
 class Completion(unittest.TestCase):

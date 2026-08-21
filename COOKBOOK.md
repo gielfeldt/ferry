@@ -125,20 +125,37 @@ work:acme/bug-hunt is already in sync
 ```
 
 And if you worked on **both** machines without syncing in between, each copy
-holds turns the other has not, and neither can be copied over the other:
+holds turns the other has not. Neither can be copied over the other, so ferry
+puts them together instead:
 
 ```
-ferry: work:acme/bug-hunt has changed in both places.
-       here:  41 records the store does not have
-       there: 12 records this directory does not have
-       neither copy holds the other, so nothing can be copied without
-       losing what is only on one side.
+merged work:acme/bug-hunt
+  318 record(s) in both, 41 only here, 12 only there
+sent bug-hunt -> work:acme/bug-hunt  (1.6 MB, +0.1 MB)
+  pushed
 ```
 
-Nothing is lost and nothing is written — both copies are still exactly as they
-were. There is no flag to override it: joining them back together is not
-something ferry does yet, and a forked session stays where it is until it does.
-For now, `ferry export` each one and decide which to keep working from.
+Every record either copy had is kept — yours as they stand, then whatever the
+store held that you did not. Nothing is chosen between, and the result is
+checked to hold both before it replaces anything.
+
+The session now holds two branches from the point where they parted. Claude
+Code reads that natively: it is the same shape a rewind or an edited turn
+produces, and most transcripts on a working machine already hold one.
+`claude --resume` follows the newest, and `ferry export` shows the lot.
+
+The one thing this cannot settle is a name. If you renamed the session on both
+machines, the two disagree about what it is called, and the order of the file
+would silently decide:
+
+```
+ferry: work:acme/bug-hunt has changed in both places, and the two do not agree
+       what it is called:
+       here:  bug-hunt-v2
+       there: bug-hunt
+       joining them would let the order of the file decide the name.
+       rename one of them, then sync again
+```
 
 ## Share a directory's memory
 
@@ -451,9 +468,15 @@ transcript under the same id, rather than starting a new session.
 
 ## When sync refuses
 
-**"has changed in both places"** — each copy holds something the other does
-not, so neither can be written without dropping it. Nothing was touched. See
+**"has changed in both places, and the two do not agree what it is called"** —
+the session was renamed in both places. The records would join, but the name
+cannot: whichever `custom-title` landed last would become the name. Rename one
+of them, then sync. Any other fork is joined rather than refused — see
 [Work on both machines](#work-on-both-machines-back-and-forth).
+
+**"the memory for … has changed in both places"** — a note was edited on both
+machines. Records can be joined; prose cannot. It says which notes differ and
+changes nothing; `ferry export --memory <store>:<dir>` shows the store’s.
 
 **"is a different conversation in each place"** — that name is taken in the
 store by another conversation. The two ids are printed; `ferry name <id>

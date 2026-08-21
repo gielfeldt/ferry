@@ -432,6 +432,29 @@ NOWHERE = "\u2014"
 STATES = {SAME: "in sync", AHEAD: "ahead", BEHIND: "behind", FORKED: "forked"}
 
 
+def record_key(line):
+    """What makes one transcript line the same as another.
+
+    Keys sorted first, because one record written twice is not always the same
+    bytes. The one key is used both to compare two copies and to join them, so
+    the two can never disagree about what counts as the same record - a merge
+    that deduplicated on a different footing from the comparison could drop a
+    record the comparison had just called unique.
+
+    None for a blank line, which is not a record at all.
+    """
+    line = line.strip()
+    if not line:
+        return None
+    try:
+        record = json.loads(line)
+    except json.JSONDecodeError:
+        # Unparseable, so it can only be taken as it stands.
+        return hashlib.sha1(line.encode()).hexdigest()
+    keyed = json.dumps(record, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha1(keyed.encode()).hexdigest()
+
+
 def line_set(jsonl):
     """A transcript as the set of records it holds.
 
@@ -449,17 +472,9 @@ def line_set(jsonl):
     try:
         with jsonl.open(errors="replace") as fh:
             for line in fh:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    record = json.loads(line)
-                except json.JSONDecodeError:
-                    # Unparseable, so it can only be compared as it stands.
-                    out.add(hashlib.sha1(line.encode()).hexdigest())
-                    continue
-                keyed = json.dumps(record, sort_keys=True, separators=(",", ":"))
-                out.add(hashlib.sha1(keyed.encode()).hexdigest())
+                key = record_key(line)
+                if key:
+                    out.add(key)
     except OSError:
         pass
     return out
@@ -1042,31 +1057,18 @@ def note_set(where):
     return out
 
 
-NOTHING_LOST = ("       neither copy holds the other, so nothing can be "
-                "copied without\n       losing what is only on one side.")
-
-
-def fork_message(what, mine, theirs):
-    """A forked transcript, in the only terms it has: how many records each way.
-
-    The records themselves have no names worth printing - a uuid tells you
-    nothing - so this says how far apart the two copies are and stops.
-    """
-    def side(n):
-        return f"{n} record" + ("" if n == 1 else "s")
-    return (f"{what} has changed in both places.\n"
-            f"       here:  {side(len(mine))} the store does not have\n"
-            f"       there: {side(len(theirs))} this directory does not have\n"
-            + NOTHING_LOST)
-
-
 def memory_fork_message(what, ours, theirs):
-    """A forked memory directory, which does have names worth printing.
+    """A forked memory directory, and why this one is not joined.
 
-    Notes are compared by name and content together, so a note edited on both
-    machines is in both sets at once. Saying it is "not in the store" would be
-    false - it is there, it just says something else - so the three ways a note
-    can differ are kept apart.
+    A transcript is a list of records, so two copies can be joined by keeping
+    every record either had. A note is prose: two versions of the same note
+    have no join that is not a guess at what the author meant. So memory says
+    what differs and stops, where a session does not.
+
+    Notes are compared by name and content together, which puts a note edited
+    on both machines in both sets at once. Saying it is "not in the store"
+    would be false - it is there, it just says something else - so the three
+    ways a note can differ are kept apart.
     """
     a, b = dict(ours), dict(theirs)
     edited = sorted(n for n in a if n in b and a[n] != b[n])
@@ -1079,7 +1081,9 @@ def memory_fork_message(what, ours, theirs):
             shown = ", ".join(names[:4])
             lines.append(f"       {label}: {shown}"
                          + (", and more" if len(names) > 4 else ""))
-    lines.append(NOTHING_LOST)
+    lines.append("       a note has no join that is not a guess at what you "
+                 "meant, so\n       nothing was changed. "
+                 "ferry export --memory shows the store's.")
     return "\n".join(lines)
 
 
@@ -1109,6 +1113,73 @@ def sync_memory(args, repo, alias, path, here):
         print(f"received memory {alias}:{path}  ({len(b)} note(s))")
     else:
         die(memory_fork_message(f"the memory for {alias}:{path}", a, b))
+
+
+def merge_transcripts(ours, theirs):
+    """Join two copies of one session into one that holds everything both had.
+
+    Every line this copy has, exactly as it stands, then every record the other
+    holds that this one does not. Nothing is chosen between and nothing is
+    dropped, which is the only join that keeps the promise the comparison makes.
+
+    Not sorted into time order. Real transcripts are not in time order - 38 of
+    the 43 on this machine step backwards at least once, one of them 249 times
+    - so Claude Code plainly follows parentUuid to reconstruct a conversation
+    rather than the order of the file, and sorting would impose an order these
+    files never had. Appending also leaves this copy untouched at the front, so
+    the joined file opens with every byte that was already here.
+
+    parentUuid is never rewritten. Both sides of the branch keep pointing at
+    the record they actually followed, which is what makes the result a shape
+    Claude Code already reads: 55 of the 71 transcripts here hold a branch
+    like it, written by Claude Code itself.
+    """
+    lines, seen = [], set()
+    with ours.open(errors="replace") as fh:
+        for line in fh:
+            if not line.endswith("\n"):
+                line += "\n"
+            lines.append(line)
+            key = record_key(line)
+            if key:
+                seen.add(key)
+    gained = 0
+    with theirs.open(errors="replace") as fh:
+        for line in fh:
+            key = record_key(line)
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            if not line.endswith("\n"):
+                line += "\n"
+            lines.append(line)
+            gained += 1
+    return lines, gained
+
+
+def merge_into(ours, theirs):
+    """Write the join over this copy, once it is proved to hold both.
+
+    Checked against the written file rather than against what was meant to be
+    written, and checked before anything is replaced. A merge is the one thing
+    ferry does that produces a file neither machine had, so it is the one place
+    that cannot be argued safe from how the code reads.
+    """
+    lines, gained = merge_transcripts(ours, theirs)
+    tmp = ours.with_suffix(f".ferry-{os.getpid()}.new")
+    try:
+        tmp.write_text("".join(lines))
+        joined = line_set(tmp)
+        for other, side in ((ours, "this copy"), (theirs, "the store's copy")):
+            if relation(joined, line_set(other)) not in (SAME, AHEAD):
+                die(f"the merge would not have held everything {side} had, "
+                    f"so nothing was changed.\n"
+                    f"       this is a bug - please report it")
+        os.replace(tmp, ours)
+    finally:
+        if tmp.exists():
+            tmp.unlink()
+    return gained
 
 
 def cmd_sync(args):
@@ -1170,12 +1241,29 @@ def cmd_sync(args):
     state = relation(a, b)
     if state == SAME:
         print(f"{alias}:{path} is already in sync")
-    elif state == AHEAD:
-        sync_send(args, repo, alias, path, ours, theirs, name)
-    elif state == BEHIND:
-        sync_receive(alias, path, theirs, ours)
-    else:
-        die(fork_message(f"{alias}:{path}", a - b, b - a))
+        return
+    if state == AHEAD:
+        return sync_send(args, repo, alias, path, ours, theirs, name)
+    if state == BEHIND:
+        return sync_receive(alias, path, theirs, ours)
+
+    # Each holds something the other has not. Joining them is the only outcome
+    # that keeps what both have, and it is the same promise as the other three
+    # rather than an exception to it - so it happens here, not under a separate
+    # command you would have to know the state to reach for.
+    mine, yours = session_name(ours), session_name(theirs)
+    if mine != yours:
+        die(f"{alias}:{path} has changed in both places, and the two do not "
+            f"agree what it is called:\n"
+            f"       here:  {mine or 'unnamed'}\n"
+            f"       there: {yours or 'unnamed'}\n"
+            f"       joining them would let the order of the file decide the "
+            f"name.\n       rename one of them, then sync again")
+    gained = merge_into(ours, theirs)
+    print(f"merged {alias}:{path}\n"
+          f"  {len(a & b)} record(s) in both, {len(a - b)} only here, "
+          f"{gained} only there")
+    sync_send(args, repo, alias, path, ours, theirs, name)
 
 
 def cmd_move(args):
