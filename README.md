@@ -345,10 +345,14 @@ fpath=(~/.local/share/zsh/site-functions $fpath)
 ```
 
 Completes commands, each command's flags, store references and session names.
-`ferry sync work:<TAB>` walks what the store holds, one level at a time like
-filename completion; `ferry export <TAB>` adds the directories that
-hold sessions, ready for a name after the colon; and `--memory` changes what is
-offered, because it changes which of the store's two trees is being asked
+`ferry sync <TAB>` names the sessions in this directory that a store already
+has, whole, beside the stores themselves — the one you mean is nearly always
+one you are standing in, and walking to it a level at a time is the width of
+the store for a ref ferry already knows. `ferry sync work:<TAB>` still walks
+what the store holds, one level at a time like filename completion;
+`ferry export <TAB>` adds the directories that hold sessions, ready for a name
+after the colon; and `--memory` changes what is offered, because it changes
+which of the store's two trees is being asked
 about. `--all` widens the last two to sessions that have no name, offered by
 id.
 

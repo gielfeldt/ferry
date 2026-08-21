@@ -1631,6 +1631,82 @@ class StoreState(unittest.TestCase):
                          (None, None))
 
 
+class SyncedRefs(unittest.TestCase):
+    """What `ferry sync <TAB>` offers before you have typed a store.
+
+    Walking the store from the top to reach a session you are standing in is
+    the whole width of the store for something ferry already knows the ref of.
+    """
+
+    def setUp(self):
+        self.root = Path(tempfile.mkdtemp())
+        (self.root / "sessions" / "acme").mkdir(parents=True)
+        self.here = Path(tempfile.mkdtemp())
+        self._repos, self._slug = f.repos, f.slug_dir
+        f.repos = lambda: {"s": {"path": str(self.root)}}
+        f.slug_dir = lambda where=None: self.here
+
+    def tearDown(self):
+        f.repos, f.slug_dir = self._repos, self._slug
+
+    def local(self, sid, name):
+        (self.here / f"{sid}.jsonl").write_text(
+            f'{{"sessionId":"{sid}","uuid":"1"}}\n'
+            f'{{"type":"custom-title","customTitle":"{name}","sessionId":"{sid}"}}\n')
+
+    def stored(self, folder, name):
+        d = self.root / "sessions" / folder
+        d.mkdir(parents=True, exist_ok=True)
+        (d / f"{name}.jsonl").write_text('{"sessionId":"x","uuid":"1"}\n')
+
+    def test_a_local_session_the_store_has_is_named_whole(self):
+        self.local("abc", "bug-hunt")
+        self.stored("acme", "bug-hunt")
+        self.assertEqual(f.synced_refs(""), ["s:acme/bug-hunt"])
+
+    def test_one_no_store_has_is_not_offered(self):
+        """There is no ref to complete yet - that is what typing one is for."""
+        self.local("abc", "only-here")
+        self.assertEqual(f.synced_refs(""), [])
+
+    def test_an_unnamed_session_is_not_offered(self):
+        (self.here / "abc.jsonl").write_text('{"sessionId":"abc","uuid":"1"}\n')
+        self.stored("acme", "bug-hunt")
+        self.assertEqual(f.synced_refs(""), [])
+
+    def test_it_narrows_as_you_type(self):
+        self.local("abc", "bug-hunt")
+        self.stored("acme", "bug-hunt")
+        self.assertEqual(f.synced_refs("s:acme/b"), ["s:acme/bug-hunt"])
+        self.assertEqual(f.synced_refs("s:other"), [])
+
+    def test_nothing_registered_is_not_an_error(self):
+        f.repos = lambda: {}
+        self.local("abc", "bug-hunt")
+        self.assertEqual(f.synced_refs(""), [])
+
+    def test_the_offered_refs_come_first(self):
+        """The stores are still walkable, but the likely answer leads."""
+        self.local("abc", "bug-hunt")
+        self.stored("acme", "bug-hunt")
+        sys.argv = ["ferry", "complete", "--line", "ferry sync "]
+        with quiet() as (out, _):
+            f.main()
+        got = out.getvalue().split()
+        self.assertEqual(got[0], "s:acme/bug-hunt")
+        self.assertIn("s:", got)
+
+    def test_a_ref_is_offered_once(self):
+        """It is both a store ref and a local one; it must not be listed
+        twice."""
+        self.local("abc", "bug-hunt")
+        self.stored("acme", "bug-hunt")
+        got = f.store_refs("s:acme/", "session")
+        mine = f.synced_refs("s:acme/")
+        merged = mine + [r for r in got if r not in set(mine)]
+        self.assertEqual(merged.count("s:acme/bug-hunt"), 1)
+
+
 class ForkMessages(unittest.TestCase):
     """What a refusal says. It is the only output of a sync that stops, so it
     has to say enough to act on - and nothing that is untrue."""

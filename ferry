@@ -1416,6 +1416,31 @@ def dir_refs(everything=False):
     return sorted({tilde(d) + ":" for d in session_dirs(everything)})
 
 
+def synced_refs(prefix, where=None):
+    """Store refs for the sessions in this directory that a store already has.
+
+    The one you mean to sync is nearly always one you are standing in, and its
+    ref sits three levels down the store - so reaching it a TAB at a time is a
+    lot of walking to arrive somewhere ferry could have named outright. These
+    are offered whole, beside the stores themselves.
+
+    Matched on the name alone, which is what makes it cheap enough for a TAB:
+    no stored transcript is opened. A name that turns out to belong to another
+    conversation is caught by `sync`, which refuses and says so.
+    """
+    index = store_index()
+    if not index:
+        return []
+    here = slug_dir(where)
+    out = []
+    for f in sorted(here.glob("*.jsonl")) if here.is_dir() else []:
+        name = session_name(f)
+        for ref, _ in index.get(name or "", []):
+            if ref.startswith(prefix):
+                out.append(ref)
+    return sorted(set(out))
+
+
 def store_refs(prefix, kind="any"):
     """<store>: and <store>:<path> candidates for whatever is typed so far.
 
@@ -1555,10 +1580,15 @@ def cmd_complete(args):
         elif cmd == "list":
             out = store_refs(cur, "memory" if memory else "session")
         elif cmd == "sync":
-            # One ref, and it is a store ref both ways round: what is offered
-            # is what the store holds. A session only here has no path there
-            # to complete yet, which is exactly when you are typing a new one.
+            # One ref, and it is a store ref whichever way the sync will go.
+            # The store's own tree is walked a level at a time, and the
+            # sessions in this directory that the store already has are named
+            # outright - they are the likely answer, and the walk to reach
+            # them is the whole width of the store.
             out = store_refs(cur, "memory" if memory else "session")
+            if not memory:
+                mine = synced_refs(cur)
+                out = mine + [r for r in out if r not in set(mine)]
         elif cmd == "name":
             # What is here, named or not - naming an unnamed one is the point.
             # The second word is a name you are inventing, so nothing.
