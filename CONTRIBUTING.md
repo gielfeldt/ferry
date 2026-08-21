@@ -6,16 +6,36 @@ fetches all three from a release.
 
 ## Running your copy
 
-`./ferry` runs straight from the checkout. To use it as it will be installed:
+`./ferry` runs straight from the checkout, and needs nothing installed.
+
+To use it everywhere - on `$PATH`, with completion - link it rather than copy
+it, so every edit is live and there is no stale copy to forget about:
 
 ```sh
-install -m755 ferry ~/.local/bin/ferry
+ln -sf "$PWD/ferry" ~/.local/bin/ferry
+```
+
+`install.sh` will not do this. It fetches the latest **release** from GitHub, so
+it installs the last tagged version and knows nothing about your working tree -
+which is what you want for a real install and never what you want for testing a
+change.
+
+The completion scripts only ever shell out to `ferry complete`, so the link
+covers them too; copy them only when you have changed the scripts themselves:
+
+```sh
 cp completions/ferry.bash ~/.local/share/bash-completion/completions/ferry
 cp completions/ferry.zsh  ~/.local/share/zsh/site-functions/_ferry
 ```
 
 `ferry --version` says `0.0.0+dev` for anything that did not come from a
-release, so you can always tell which one you are talking to.
+release, so you can always tell which one you are talking to. To go back to the
+released one:
+
+```sh
+rm ~/.local/bin/ferry
+curl -fsSL https://raw.githubusercontent.com/gielfeldt/ferry/main/install.sh | sh
+```
 
 **It targets Python 3.9.** CI runs 3.9, 3.12 and 3.13, and your machine is
 almost certainly newer than the floor — so `match`, `X | None` in annotations
