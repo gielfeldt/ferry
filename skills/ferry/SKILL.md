@@ -12,7 +12,7 @@ encrypted git repo, and reads what is on this one. It is a single command; run
 
 **Read freely. Never change anything without being asked in this
 conversation.** Reading is `sessions`, `memory`, `list`, `export`, `stores`.
-Everything else — `save`, `load`, `move`, `name`, `add`, `rename`, `remove` —
+Everything else — `sync`, `move`, `name`, `add`, `rename`, `remove` —
 alters a transcript, a store or the registry. Propose the exact command and let
 the user run it, or run it only after they say yes to that specific command.
 
@@ -85,7 +85,7 @@ propose names:
 A name must be unique in its directory, cannot hold `/` or `:`, and cannot
 begin with `.` or `-`.
 
-## Checking what is saved
+## Checking what is in a store
 
     ferry list <store>            sessions in a store
     ferry list --memory <store>   the memory it holds
@@ -93,5 +93,10 @@ begin with `.` or `-`.
 
 To answer "is this saved?", compare `ferry sessions` here against
 `ferry list <store>` — matching by name, since a session keeps one name
-everywhere. If it is not there, say so and give the command that would save it;
-do not save it.
+everywhere. If it is not there, say so and give the `ferry sync` command that
+would send it; do not run it.
+
+`ferry sync <store>:<dir>/<name>` is the one command either way: it compares
+the two copies and copies whichever holds more, so the same line works on
+either machine. It refuses when both have changed. Never run it to "just
+check" — it writes and pushes when this machine is the one that is ahead.

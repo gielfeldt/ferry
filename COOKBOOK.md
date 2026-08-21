@@ -14,7 +14,8 @@ Worked examples. Each one stands alone; skip to the situation you are in.
 - [Rename a session](#rename-a-session)
 - [Reorganise a store](#reorganise-a-store)
 - [Upgrading a store from before 1.2](#upgrading-a-store-from-before-12)
-- [When save refuses](#when-save-refuses)
+- [Sessions loaded under the wrong id](#sessions-loaded-under-the-wrong-id-before-133)
+- [When sync refuses](#when-sync-refuses)
 - [When update says DIVERGED](#when-update-says-diverged)
 - [Adopt a checkout you already have](#adopt-a-checkout-you-already-have)
 - [Losing a laptop](#losing-a-laptop)
@@ -40,7 +41,7 @@ git-crypt export-key ~/sessions.key
 ```
 
 Encrypting `*` rather than a list of paths means nothing can be committed in
-the clear because you saved to a folder you had not thought of.
+the clear because you synced to a folder you had not thought of.
 
 Put `~/sessions.key` somewhere safe — a password manager — and keep a copy off
 the laptop. Without it the store is unreadable.
@@ -59,7 +60,7 @@ ferry list work
 ```
 
 `ferry add` clones into `~/.local/share/ferry/work` and unlocks it. If you skip
-`--key`, the clone stays locked and every `save` is refused until you supply it.
+`--key`, the clone stays locked and every `sync` is refused until you supply it.
 
 ## Move a session to the other machine
 
@@ -76,44 +77,67 @@ Then, in the directory you were working in:
 ```sh
 ferry sessions
 #   3f9a1c2e-…  2026-08-16   1.2 MB  bug-hunt
-ferry save bug-hunt to work:acme
+ferry sync work:acme/bug-hunt
 ```
 
 On the other machine, in whichever directory you want it:
 
 ```sh
-ferry update work
-ferry load work:acme/bug-hunt
+ferry sync work:acme/bug-hunt
 #   resume it here with:  claude --resume bug-hunt
 
 claude --resume bug-hunt
 ```
+
+The same command on both machines. There is nothing on this one yet, so the
+store's copy is the one holding more, and it comes here.
 
 The directory does not have to be the same one, or even the same path, and no
 rename is needed — the name is inside the transcript, so it arrives with it.
 
 ## Work on both machines, back and forth
 
-The rule is: **load before you work, save when you stop.**
+The rule is: **sync before you work, sync when you stop.** It is one command,
+and it is the same one everywhere:
 
 ```sh
 # laptop A, finishing up
-ferry save bug-hunt to work:acme
+ferry sync work:acme/bug-hunt          # sent
 
 # laptop B, starting
-ferry load work:acme/bug-hunt --force     # replace B's older copy
+ferry sync work:acme/bug-hunt          # received
 claude --resume bug-hunt
 # … work …
-ferry save bug-hunt to work:acme
+ferry sync work:acme/bug-hunt          # sent
 
 # laptop A, next morning
-ferry load work:acme/bug-hunt --force
+ferry sync work:acme/bug-hunt          # received
 ```
 
-`--force` is needed on `load` when your local copy is *longer* than the store's
-— ferry assumes the longer one is newer and refuses to shrink it. If you get
-that refusal and you did not expect it, you probably forgot to save on the
-other machine.
+You never say which way. ferry compares the two copies and sends whichever
+holds everything the other holds, and more — so forgetting which machine you
+were last on costs nothing.
+
+If you sync when there is nothing to do, it says so and stops:
+
+```
+work:acme/bug-hunt is already in sync
+```
+
+And if you worked on **both** machines without syncing in between, each copy
+holds turns the other has not, and neither can be copied over the other:
+
+```
+ferry: work:acme/bug-hunt has changed in both places.
+       here:  41 records the store does not have
+       there: 12 records this directory does not have
+       neither copy holds the other, so nothing can be copied without
+       losing what is only on one side.
+```
+
+Nothing is lost and nothing is written — both copies are still exactly as they
+were. Joining them back together is not something ferry does yet; for now,
+`ferry export` each one and decide which to keep working from.
 
 ## Share a directory's memory
 
@@ -122,7 +146,7 @@ Memory belongs to the directory, not to any session:
 ```sh
 cd ~/develop/acme
 ferry memory                        # what is here
-ferry save --memory to work:acme    # the store's memory for acme
+ferry sync --memory work:acme       # the store's memory for acme
 ```
 
 To read what the store holds before you take it, ask for memory rather than
@@ -139,11 +163,21 @@ On the other machine:
 
 ```sh
 cd ~/work/acme
-ferry load --memory work:acme
+ferry sync --memory work:acme
 ```
 
-Saving replaces the store's copy entirely, so notes that exist only on the
-other machine are lost. Load first if in doubt.
+Same command, same rule as a session: whichever side holds every note the other
+holds, and more, is the one that gets copied. A note is compared by its name
+*and* its contents, so one edited in both places is a fork and stops the sync:
+
+```
+ferry: the memory for work:acme has changed in both places.
+       changed on both sides: conventions.md
+       only there: deploy.md
+```
+
+Nothing is written when it stops. `ferry export --memory work:acme` shows you
+the store's version to compare against your own.
 
 ## Keep work and personal apart
 
@@ -154,8 +188,8 @@ ferry add work     git@github.com:you/work-notes.git     --key ~/work.key
 ferry add personal git@github.com:you/personal-sessions.git --key ~/personal.key
 ferry stores
 
-ferry save invoice-import to work:accounts
-ferry save house-move     to personal:admin
+ferry sync work:accounts/invoice-import
+ferry sync personal:admin/house-move
 ```
 
 Nothing is shared between them — separate repos, separate keys, separate
@@ -228,7 +262,7 @@ clear - fine on your own machine, worth knowing before piping it anywhere.
 
 ## Name a session you never named
 
-An unnamed session cannot be saved — there would be nothing to call it — and
+An unnamed session cannot be sent — there would be nothing to call it — and
 it is not listed by default, since there is no ref that would reach it. To find
 them:
 
@@ -248,7 +282,7 @@ Then name it, without opening it:
 
 ```sh
 ferry name 1b94d02f pr-3-readiness
-ferry save pr-3-readiness to work:acme
+ferry sync work:acme/pr-3-readiness
 ```
 
 `ferry name` appends the same record `/rename` writes, so the session answers
@@ -281,7 +315,7 @@ The store's filename is the name. Renaming locally does not move anything, so:
 # in Claude Code
 /rename better-name
 
-ferry save better-name to work:acme      # -> acme/better-name.jsonl
+ferry sync work:acme/better-name         # -> acme/better-name.jsonl
 ```
 
 The old file is still there under the old name. Remove it yourself:
@@ -309,15 +343,15 @@ ferry move work:old-project work:archive      # a whole folder of sessions
 ferry move work:archive/notes work:           # to the top of the store
 ```
 
-You name a *directory* and the leaf comes with it, the same rule `save`
-follows. `--memory` says which of the two you mean, as it does everywhere else.
+You name a *directory* and the leaf comes with it. `--memory` says which of the
+two you mean, as it does everywhere else.
 One commit, pushed, recorded as a rename so history follows the file.
 
 It refuses if something is already at the destination, unless you pass
 `--force`, and it works inside one store only — two stores have two keys, so
-crossing between them is a `load` and then a `save`.
+crossing between them is a `sync` out of one and a `sync` into the other.
 
-Nothing local changes. A machine that already loaded the old copy still has it,
+Nothing local changes. A machine that already has the old copy still has it,
 under the name it always had.
 
 ## Upgrading a store from before 1.2
@@ -359,12 +393,15 @@ should be identical to the one you got before, dates included. Nothing in
 
 ## Sessions loaded under the wrong id, before 1.3.3
 
-Up to 1.3.2, `ferry load` took the **first** session id inside a transcript.
+Up to 1.3.2, loading a session took the **first** session id inside a
+transcript.
 That is right for most sessions and wrong for a resumed one: resuming opens the
 new transcript with the record the old one was interrupted on, and that record
 still carries the old id. So a resumed session was loaded under its *parent's*
 id — landing on the parent's transcript, and, because the child is the larger
-file, sailing straight past the shrink check that exists to stop exactly that.
+file, sailing straight past the size check that existed to stop exactly that.
+(`ferry sync` replaced that check outright in 1.4; it compares what each copy
+holds rather than how big it is.)
 
 Upgrade first, then check each machine. This reads only, and changes nothing:
 
@@ -403,29 +440,34 @@ mv ~/.claude/projects/<dir>/<wrong>.jsonl \
    ~/.claude/projects/<dir>/<right>.jsonl
 ```
 
-If it **does** exist, stop — that is the session the mis-load was named after,
-and overwriting it repeats the original bug. Load the store copy again with a
-fixed ferry, which now writes the right name, and delete the stale file once
-you can see both.
+If it **does** exist, stop — that is the session the bad name was taken from,
+and overwriting it repeats the original bug. `ferry sync` the store copy again
+with a fixed ferry, which now writes the right name, and delete the stale file
+once you can see both.
 
 Compacting is not affected and never was: it appends a summary to the same
 transcript under the same id, rather than starting a new session.
 
-## When save refuses
+## When sync refuses
+
+**"has changed in both places"** — each copy holds something the other does
+not, so neither can be written without dropping it. Nothing was touched. See
+[Work on both machines](#work-on-both-machines-back-and-forth).
+
+**"is a different conversation in each place"** — that name is taken in the
+store by another conversation. The two ids are printed; `ferry name <id>
+<another-name>` frees the name on this machine.
 
 **"has no name, and the name is what it would be filed under"** — the session
-was never named. `/rename` it, then save. `ferry sessions` does not list it, so
+was never named. `/rename` it, then sync. `ferry sessions` does not list it, so
 that the list only holds things you can act on; it says how many are hiding, and
 `ferry sessions --all` shows them with Claude's own title marked `*` — a title
 is not a name.
 
-**"already holds a different session"** — that name is taken in the store by
-another conversation. Rename one of them, or `--force` if you really mean to
-replace it.
-
-**"saving would shrink N -> M bytes"** — the store has a longer copy, so
-someone saved from elsewhere after you last loaded. `ferry load` it first, or
-`--force` if your copy is genuinely the one you want.
+**"this clone has diverged from its remote"** — that is git, not the session:
+two machines pushed to the store. `ferry update <store>` explains how to sort
+it out. Nothing is compared until the pull succeeds, so a stale clone never
+reports a fork it does not have.
 
 **"has no git-crypt, so this would be committed in the clear"** — the store is
 not encrypted, or your clone is locked. `ferry add <name> --path <dir> --key
@@ -478,9 +520,9 @@ If the laptop had the key, assume the key is gone with it. There is no way to
 re-encrypt an existing git history usefully — rotating means a new store:
 
 ```sh
-# new private repo, new key, then re-save what still matters
+# new private repo, new key, then re-send what still matters
 ferry add work2 git@github.com:you/sessions2.git --key ~/sessions2.key
-ferry save bug-hunt to work2:acme
+ferry sync work2:acme/bug-hunt
 ```
 
 The old store's history keeps whatever the old key opens, so delete the repo if

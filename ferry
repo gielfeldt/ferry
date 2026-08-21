@@ -1,15 +1,18 @@
 #!/usr/bin/env python3
 """ferry - carry Claude Code sessions between machines, using a git repo.
 
-save copies a transcript out of ~/.claude/projects/<cwd>/ into a store and
-pushes. load pulls and copies it back. That is the whole idea - scp with a git
-repo in the middle. Nothing runs on its own, nothing is linked, nothing is
-watched: it does exactly what you type, when you type it.
+sync carries a transcript between ~/.claude/projects/<cwd>/ and a store,
+whichever way it needs to go: the copy holding everything the other holds, and
+more, is the one that gets copied. That is the whole idea - scp with a git repo
+in the middle, and a rule that keeps it from ever copying the wrong way.
+Nothing runs on its own, nothing is linked, nothing is watched: it does exactly
+what you type, when you type it.
 """
 import argparse
 import base64
 import contextlib
 import fcntl
+import hashlib
 import json
 import os
 import re
@@ -409,15 +412,60 @@ def size_delta(src, dest):
     return f"{new/1e6:.1f} MB, {unit}"
 
 
-def refuse_shrink(src, dest, force, what):
-    """Transcripts only grow, so a shorter replacement means lost turns."""
-    if force or not dest.exists():
-        return
-    a, b = src.stat().st_size, dest.stat().st_size
-    if a < b:
-        die(f"{what} would shrink {b} -> {a} bytes.\n"
-            f"       {dest}\n"
-            f"       load the newer copy first, or pass --force to overwrite")
+SAME, AHEAD, BEHIND, FORKED = "same", "ahead", "behind", "forked"
+
+
+def line_set(jsonl):
+    """A transcript as the set of records it holds.
+
+    Hashed after sorting each record's keys, because one record written twice
+    is not always the same bytes: two copies of a single custom-title record,
+    identical in every field and value, can differ in key order alone. Compared
+    as bytes that reads as a fork - two sessions on this machine are exactly
+    that case. Compared as records it does not.
+
+    A set rather than a list, because metadata records repeat verbatim - mode
+    and custom-title are written again and again through a session - and a copy
+    holding five of one line knows nothing more than a copy holding three.
+    """
+    out = set()
+    try:
+        with jsonl.open(errors="replace") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    record = json.loads(line)
+                except json.JSONDecodeError:
+                    # Unparseable, so it can only be compared as it stands.
+                    out.add(hashlib.sha1(line.encode()).hexdigest())
+                    continue
+                keyed = json.dumps(record, sort_keys=True, separators=(",", ":"))
+                out.add(hashlib.sha1(keyed.encode()).hexdigest())
+    except OSError:
+        pass
+    return out
+
+
+def relation(mine, theirs):
+    """How two copies of one thing relate, by what each holds.
+
+    This decides which way a sync goes, and it decides it by content - not by
+    size, not by clock. A copy may only be replaced by one holding everything
+    it already held, so a direction is never a guess.
+
+    FORKED means each holds something the other does not. No copy can then be
+    made without dropping one of them, which is why sync stops there instead
+    of choosing.
+    """
+    if mine == theirs:
+        return SAME
+    if theirs < mine:
+        return AHEAD
+    if mine < theirs:
+        return BEHIND
+    return FORKED
 
 
 def encrypted(repo):
@@ -487,7 +535,7 @@ def commit_push(repo, message, paths):
     if git(repo, "remote", check=False).stdout.strip():
         if git(repo, "push", "--quiet", "origin", "HEAD", check=False).returncode:
             die("push rejected - another machine pushed first.\n"
-                "       ferry update <repo>, then save again")
+                "       ferry update <repo>, then sync again")
         print("  pushed")
 
 
@@ -564,7 +612,7 @@ def cmd_add(args):
 def unsaved_work(repo):
     """What this checkout holds that its remote does not.
 
-    Forgetting a store leaves the directory, so nothing is deleted - but a save
+    Forgetting a store leaves the directory, so nothing is deleted - but a sync
     that never reached the remote becomes a directory you have to remember,
     which is the same as losing it.
     """
@@ -638,123 +686,6 @@ def cmd_stores(args):
         state = "" if p.is_dir() else "  MISSING"
         lock = "" if not p.is_dir() or encrypted(p) else "  NOT ENCRYPTED"
         print(f"  {alias:<14} {p}{state}{lock}")
-
-
-def cmd_save(args):
-    """Copy a session, or this directory's memory, into a repo.
-
-    The target is a directory, never a filename: what a session is called in
-    the repo is what you called it here. That keeps one name for one session
-    across every machine, and makes the check below meaningful.
-    """
-    # "to" is noise for the parser but reads better for you, so drop it here
-    # rather than letting it be mistaken for a session name.
-    words = [w for w in args.words if w != "to"]
-    if args.memory:
-        if len(words) != 1:
-            die(f"expected one <store>:<dir>, got: {' '.join(words)}")
-        args.session, target = None, words[0]
-    else:
-        if len(words) != 2:
-            die("give a session and a destination, e.g.\n"
-                "       ferry save bug-hunt to work:acme\n"
-                "       ferry save --memory to work:acme")
-        args.session, target = words
-    alias, path = split_ref(target, directory=True)
-    repo, here = repo_dir(alias), slug_dir()
-    check_encryption(repo, alias, args.allow_plaintext)
-    pull(repo)
-
-    if args.memory:
-        src = here / "memory"
-        if not src.is_dir() or not any(src.glob("*.md")):
-            die(f"no memory for this directory ({src})")
-        leaf = in_store(path, memory=True)
-        dest = repo / leaf
-        if dest.exists() and not dest.is_dir():
-            die(f"{dest} exists and is not a directory")
-        replace_dir(src, dest)
-        n = len(list(dest.rglob("*.md")))
-        print(f"saved memory -> {alias}:{path}  ({n} file(s))")
-        commit_push(repo, f"memory: {path or 'top'}", [leaf])
-        return
-
-    src = find_session(args.session, here)
-    name = session_name(src)
-    if not name:
-        title = ai_title(src)
-        die(f"{src.stem} has no name, and the name is what it would be "
-            f"filed under.\n"
-            + (f"       Claude calls it '{title}'.\n" if title else "")
-            + f"       resume it and /rename it first, then save it.")
-
-    shown = f"{path}/{name}" if path else name      # what you call it
-    leaf = in_store(shown)                          # where it goes
-    dest = repo / f"{leaf}.jsonl"
-
-    # The path says who this is; the transcript knows who it really is. If they
-    # disagree, saving would replace one conversation with an unrelated one -
-    # and being larger, it would sail straight past the shrink check.
-    if dest.exists() and not args.force:
-        theirs = session_id_of(dest)
-        if theirs and theirs != src.stem:
-            die(f"{alias}:{shown} already holds a different session:\n"
-                f"       there: {theirs}\n       here:  {src.stem}\n"
-                f"       two sessions cannot share a name here - rename one, "
-                f"or --force to replace it")
-
-    refuse_shrink(src, dest, args.force, "saving")
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    delta = size_delta(src, dest)
-    shutil.copyfile(src, dest)
-    print(f"saved {name} -> {alias}:{shown}  ({delta})")
-    commit_push(repo, f"session: {shown}", [f"{leaf}.jsonl"])
-
-
-def cmd_load(args):
-    """Copy a session, or a directory's memory, out of a store and into here.
-
-    --memory says which of the store's two trees to read from; it is never a
-    guess about what happens to exist.
-    """
-    alias, path = split_ref(args.target, directory=args.memory)
-    repo, here = repo_dir(alias), slug_dir()
-    pull(repo)
-
-    if args.memory:
-        mem = repo / in_store(path, memory=True)
-        if not mem.is_dir():
-            die(f"no memory at {alias}:{path}")
-        dest = here / "memory"
-        # Claude Code creates an empty memory/ for every directory, so only an
-        # existing one that actually holds notes is worth protecting.
-        if any(dest.glob("*.md")) and not args.force:
-            die(f"{dest} already holds {len(list(dest.glob('*.md')))} note(s) - "
-                f"pass --force to replace them")
-        here.mkdir(parents=True, exist_ok=True)
-        replace_dir(mem, dest)
-        print(f"loaded memory {alias}:{path} -> {dest}  "
-              f"({len(list(dest.rglob('*.md')))} file(s))")
-        return
-
-    jsonl = repo / f"{in_store(path)}.jsonl"
-    if not jsonl.exists():
-        die(f"nothing at {alias}:{path}")
-    # The transcript carries its own identity, so nothing beside it is needed.
-    sid = session_id_of(jsonl)
-    if not sid:
-        die(f"cannot tell which session {jsonl} is - no id inside it")
-
-    dest = here / f"{sid}.jsonl"
-    refuse_shrink(jsonl, dest, args.force, "loading")
-    here.mkdir(parents=True, exist_ok=True)
-    delta = size_delta(jsonl, dest)
-    shutil.copyfile(jsonl, dest)
-    # The name travels inside the transcript, so it is already this session's
-    # name here - no rename needed, and --resume takes it as readily as an id.
-    name = args.name or session_name(dest) or sid
-    print(f"loaded {alias}:{path} ({delta})")
-    print(f"  resume it here with:  claude --resume {name}")
 
 
 def export_source(ref):
@@ -1014,7 +945,7 @@ def cmd_name(args):
     """
     if ":" in args.session and args.session.partition(":")[0] in repos():
         die("a session in a store cannot be named here - its filename is its "
-            "name.\n       load it, name it, and save it again")
+            "name.\n       sync it here, name it, and sync it back")
 
     src = export_source(args.session)
     name = args.new
@@ -1059,14 +990,185 @@ def cmd_export(args):
                     media=Path(args.media) if args.media else None)
 
 
+def sync_send(args, repo, alias, path, src, dest, what):
+    """This directory's copy into the store. Only ever when it loses nothing."""
+    check_encryption(repo, alias, args.allow_plaintext)
+    leaf = f"{in_store(path)}.jsonl"
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    delta = size_delta(src, dest)
+    shutil.copyfile(src, dest)
+    print(f"sent {what} -> {alias}:{path}  ({delta})")
+    commit_push(repo, f"session: {path}", [leaf])
+
+
+def sync_receive(alias, path, src, dest):
+    """The store's copy into this directory. Only ever when it loses nothing.
+
+    The name travels inside the transcript, so it arrives already named, and
+    --resume takes that name as readily as the id.
+    """
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    delta = size_delta(src, dest)
+    shutil.copyfile(src, dest)
+    print(f"received {alias}:{path}  ({delta})")
+    print(f"  resume it here with:  claude --resume "
+          f"{session_name(dest) or dest.stem}")
+
+
+def note_set(where):
+    """A memory directory as the set of notes it holds, by name and content."""
+    out = set()
+    if where.is_dir():
+        for f in where.rglob("*.md"):
+            out.add((str(f.relative_to(where)),
+                     hashlib.sha1(f.read_bytes()).hexdigest()))
+    return out
+
+
+NOTHING_LOST = ("       neither copy holds the other, so nothing can be "
+                "copied without\n       losing what is only on one side.")
+
+
+def fork_message(what, mine, theirs):
+    """A forked transcript, in the only terms it has: how many records each way.
+
+    The records themselves have no names worth printing - a uuid tells you
+    nothing - so this says how far apart the two copies are and stops.
+    """
+    def side(n):
+        return f"{n} record" + ("" if n == 1 else "s")
+    return (f"{what} has changed in both places.\n"
+            f"       here:  {side(len(mine))} the store does not have\n"
+            f"       there: {side(len(theirs))} this directory does not have\n"
+            + NOTHING_LOST)
+
+
+def memory_fork_message(what, ours, theirs):
+    """A forked memory directory, which does have names worth printing.
+
+    Notes are compared by name and content together, so a note edited on both
+    machines is in both sets at once. Saying it is "not in the store" would be
+    false - it is there, it just says something else - so the three ways a note
+    can differ are kept apart.
+    """
+    a, b = dict(ours), dict(theirs)
+    edited = sorted(n for n in a if n in b and a[n] != b[n])
+    here = sorted(set(a) - set(b) - set(edited))
+    there = sorted(set(b) - set(a) - set(edited))
+    lines = [f"{what} has changed in both places."]
+    for label, names in (("changed on both sides", edited),
+                         ("only here", here), ("only there", there)):
+        if names:
+            shown = ", ".join(names[:4])
+            lines.append(f"       {label}: {shown}"
+                         + (", and more" if len(names) > 4 else ""))
+    lines.append(NOTHING_LOST)
+    return "\n".join(lines)
+
+
+def sync_memory(args, repo, alias, path, here):
+    """The same four states, over a directory of notes rather than a transcript.
+
+    Memory is written by replacing the directory wholesale, so the question is
+    the same one: does the copy about to be written hold everything the copy
+    being replaced already held?
+    """
+    theirs, ours = repo / in_store(path, memory=True), here / "memory"
+    a, b = note_set(ours), note_set(theirs)
+    if not a and not b:
+        die(f"no memory here, and none at {alias}:{path}")
+    state = relation(a, b)
+    if state == SAME:
+        print(f"memory {alias}:{path} is already in sync  ({len(a)} note(s))")
+    elif state == AHEAD:
+        check_encryption(repo, alias, args.allow_plaintext)
+        replace_dir(ours, theirs)
+        print(f"sent memory -> {alias}:{path}  ({len(a)} note(s))")
+        commit_push(repo, f"memory: {path or 'top'}",
+                    [in_store(path, memory=True)])
+    elif state == BEHIND:
+        here.mkdir(parents=True, exist_ok=True)
+        replace_dir(theirs, ours)
+        print(f"received memory {alias}:{path}  ({len(b)} note(s))")
+    else:
+        die(memory_fork_message(f"the memory for {alias}:{path}", a, b))
+
+
+def cmd_sync(args):
+    """Make one session, or one directory's memory, the same in both places.
+
+    One argument, and the store ref carries the name, because the direction is
+    not worth being told: it follows from which copy holds what. A copy is only
+    ever replaced by one holding everything it already held, so there is no
+    direction to get wrong and no flag to get wrong either.
+
+    When neither copy holds the other, each has something the other has not,
+    no copy can be made without dropping it, and this stops.
+    """
+    alias, path = split_ref(args.target, directory=args.memory)
+    repo, here = repo_dir(alias), slug_dir()
+    # Before anything is compared: comparing against a stale store is how a
+    # sync reports a fork that only git was behind on.
+    pull(repo)
+
+    if args.memory:
+        return sync_memory(args, repo, alias, path, here)
+
+    name = path.rsplit("/", 1)[-1]
+    theirs = repo / f"{in_store(path)}.jsonl"
+    mine = names_here(here).get(name)
+
+    if not theirs.exists():
+        if mine is None:
+            look = ("ferry sessions", f"ferry list {alias}")
+            w = max(len(c) for c in look) + 3
+            die(f"nothing called '{name}' here, and nothing at "
+                f"{alias}:{path}\n"
+                f"       {look[0]:<{w}}what is here\n"
+                f"       {look[1]:<{w}}what is there")
+        # Nothing there yet, so there is nothing there to lose.
+        return sync_send(args, repo, alias, path, mine, theirs, name)
+
+    sid = session_id_of(theirs)
+    if not sid:
+        die(f"cannot tell which session {alias}:{path} is - no id inside it")
+
+    # The name says where in the store to look; the id says which conversation
+    # was found there. A local session wearing that name with a different id is
+    # a different conversation, and neither may be written over the other.
+    if mine is not None and mine.stem != sid:
+        die(f"'{name}' is a different conversation in each place:\n"
+            f"       here:  {mine.stem}\n"
+            f"       there: {sid}\n"
+            f"       ferry name {mine.stem} <another-name>  to free the name")
+
+    # Found by id, not by name: a copy renamed here is still the same
+    # conversation, and looking only for the name would take it for a stranger
+    # and write the store's copy straight over it.
+    ours = here / f"{sid}.jsonl"
+    if not ours.exists():
+        return sync_receive(alias, path, theirs, ours)
+
+    a, b = line_set(ours), line_set(theirs)
+    state = relation(a, b)
+    if state == SAME:
+        print(f"{alias}:{path} is already in sync")
+    elif state == AHEAD:
+        sync_send(args, repo, alias, path, ours, theirs, name)
+    elif state == BEHIND:
+        sync_receive(alias, path, theirs, ours)
+    else:
+        die(fork_message(f"{alias}:{path}", a - b, b - a))
+
+
 def cmd_move(args):
     """Re-file something inside a store, keeping the name it already has.
 
     The destination is a directory and the leaf comes along unchanged, the same
-    way `save` names the file after the session. That is not only symmetry: a
+    way `sync` names the file after the session. That is not only symmetry: a
     session's name lives inside its own transcript, so a move able to rename the
     file could make the two disagree. Not being able to say a new name means it
-    cannot happen. To rename, /rename the session and save it again.
+    cannot happen. To rename, /rename the session and sync it again.
 
     --memory picks the tree, as everywhere else. There is nothing to resolve
     beyond that: the two trees cannot hold the same path.
@@ -1076,8 +1178,8 @@ def cmd_move(args):
     if src_alias != dst_alias:
         die(f"move works inside one store, and '{src_alias}' and '{dst_alias}' "
             f"are two of them.\n"
-            f"       they are encrypted with different keys - load it out of "
-            f"one and save it into the other")
+            f"       they are encrypted with different keys - sync it out of "
+            f"one and into the other")
 
     repo = repo_dir(src_alias)
     pull(repo)
@@ -1127,7 +1229,7 @@ def replace_dir(src, dest):
     """Put a copy of src at dest, without a long moment where dest is neither.
 
     rmtree then copytree leaves the destination empty for as long as the copy
-    takes, and half-full if it is interrupted - which for `load --memory` is
+    takes, and half-full if it is interrupted - which for `sync --memory` is
     your own notes. Copying alongside and swapping narrows that to two renames:
     stop it anywhere earlier and the old notes are still there.
     """
@@ -1262,10 +1364,6 @@ def list_one(alias, path, memory):
 # flag as --key. Only --media has no short form, by design.
 FILE_FLAGS = {"--key", "-k", "--path", "-p", "--media"}
 
-# Options whose value is a name you are about to invent, which nothing can
-# guess and no file will match either.
-NAME_FLAGS = {"--name", "-n"}
-
 # Commands that take nothing at all after them.
 NO_ARGS = {"stores"}
 
@@ -1284,8 +1382,7 @@ COMMANDS = {
     "stores":   [],
     "sessions": ["--global", "--all"],
     "memory":   ["--global"],
-    "save":     ["--memory", "--force", "--allow-plaintext"],
-    "load":     ["--memory", "--force", "--name"],
+    "sync":     ["--memory", "--allow-plaintext"],
     "move":     ["--memory", "--force"],
     "export":   ["--tools", "--media", "--raw", "--all", "--memory"],
     "name":     [],
@@ -1370,7 +1467,7 @@ def given(words, long, short):
     """Was this flag typed, in either form?
 
     Matching the long spelling alone was enough until the short ones existed,
-    and then `ferry load -m store:` quietly completed as though --memory had
+    and then `ferry sync -m store:` quietly completed as though --memory had
     not been given. Bunched shorts count too: -ag is both of them.
     """
     for w in words:
@@ -1399,13 +1496,10 @@ def cmd_complete(args):
     cur = words[-1] if words else ""
     prev = [w for w in words[:-1] if not w.startswith("-")]
 
-    # A flag that takes a value: whatever comes next is a file or a name of
-    # your choosing, and ferry has nothing useful to say about it. Saying
-    # nothing lets the shell fall back to filename completion.
+    # A flag that takes a file: let the shell complete filenames, which it
+    # does better than ferry could.
     if len(words) >= 2 and words[-2] in FILE_FLAGS:
         sys.exit(FILES)
-    if len(words) >= 2 and words[-2] in NAME_FLAGS:
-        sys.exit(NOTHING)
 
     if len(prev) <= 1:                      # still choosing the command
         out = ("--help", "--version") if cur.startswith("-") else sorted(COMMANDS)
@@ -1439,19 +1533,11 @@ def cmd_complete(args):
             out = [n for n in sorted(repos()) if n.startswith(cur)]
         elif cmd == "list":
             out = store_refs(cur, "memory" if memory else "session")
-        elif cmd == "load":
+        elif cmd == "sync":
+            # One ref, and it is a store ref both ways round: what is offered
+            # is what the store holds. A session only here has no path there
+            # to complete yet, which is exactly when you are typing a new one.
             out = store_refs(cur, "memory" if memory else "session")
-        elif cmd == "save":
-            # <session> [to] <store>:<dir>, or --memory [to] <store>:<dir>.
-            # The first word is a session here, not a store ref - what you are
-            # naming is a conversation on this machine.
-            if len(prev) == 2 and not memory:
-                out = sorted(n for n in names_here(slug_dir())
-                             if n.startswith(cur))
-            else:
-                out = store_refs(cur)
-                if len(prev) == (2 if memory else 3) and "to".startswith(cur):
-                    out.append("to")
         elif cmd == "name":
             # What is here, named or not - naming an unnamed one is the point.
             # The second word is a name you are inventing, so nothing.
@@ -1549,7 +1635,7 @@ def cmd_update(args):
             continue
         if ahead and not behind:
             print(f"{alias}: {ahead} commit(s) here that the remote lacks - "
-                  f"they go up with your next save")
+                  f"they go up with your next sync")
             continue
         if behind and not ahead:
             git(repo, "merge", "--ff-only", "@{u}")
@@ -1713,10 +1799,10 @@ def session_dirs(everything=False):
 
 
 def cmd_sessions(args):
-    """What can be referred to here, so you know what you can save or read.
+    """What can be referred to here, so you know what you can sync or read.
 
     Named sessions only, unless --all. A session with no name cannot be named
-    in a ref at all - `ferry save` refuses it, and `<dir>:<name>` has nothing
+    in a ref at all - `ferry sync` refuses it, and `<dir>:<name>` has nothing
     to match - so listing it by default was showing you things you could not
     then do anything with. --all brings them back, addressed by id, which is
     the only handle they have.
@@ -1755,7 +1841,7 @@ def cmd_sessions(args):
     if n:
         # The hint only applies where you are standing: save reads the current
         # directory's memory, whatever this listing is pointed at.
-        hint = "" if args.where else "(ferry save --memory to <store>:<dir>)"
+        hint = "" if args.where else "(ferry sync --memory <store>:<dir>)"
         print(f"  {'memory':<36}  {'':10}  {n:6} md   {hint}".rstrip())
     if unnamed and not args.all:
         print(f"\n  {unnamed} unnamed - ferry sessions "
@@ -1826,10 +1912,8 @@ USAGE = """\
   ferry sessions [<dir>] [--global] [--all]
   ferry name <session>|<dir>:<session> <name>
   ferry memory [<dir>] [--global]
-  ferry save <session> [to] <store>:<dir> [--force]
-  ferry save --memory [to] <store>:<dir> [--force]
-  ferry load <store>:<path> [--force]
-  ferry load --memory <store>:<dir> [--force]
+  ferry sync <store>:<path>
+  ferry sync --memory <store>:<dir>
   ferry move <store>:<path> <store>:<dir> [--force]
   ferry move --memory <store>:<dir> <store>:<dir> [--force]
   ferry list [<store>[:<path>]]           without a store, same as `stores`
@@ -1858,15 +1942,11 @@ examples:
     ferry memory                                  notes here
     ferry memory --global                         everywhere that remembers
 
-  send it
-    ferry save bug-hunt to work:acme              -> acme/bug-hunt.jsonl
-    ferry save --memory to work:acme              -> acme/memory/
-
-  fetch it on the other machine
-    ferry list work                               its sessions
+  move it between machines
+    ferry sync work:acme/bug-hunt                 whichever way it needs to go
+    ferry sync --memory work:acme                 that folder's notes
+    ferry list work                               what the store holds
     ferry list --memory work                      its memory
-    ferry load work:acme/bug-hunt                 a session
-    ferry load --memory work:acme                 that folder's memory
     ferry update work
 
   read one
@@ -1881,9 +1961,11 @@ examples:
     ferry move --memory work:acme work:acme-v2    -> acme-v2/memory
     ferry move work:acme/bug-hunt work:archive    -> archive/bug-hunt.jsonl
 
-A session is filed under its own name, so you give a directory and ferry names
-the file. Loading picks one out again, so there you give the whole path.
-Moving keeps the name too - to change it, /rename and save again.
+sync takes the whole path and works out the direction itself: whichever copy
+holds everything the other holds, and more, is the one that gets copied. A copy
+is never replaced by one holding less, so there is no direction to get wrong.
+When each holds something the other does not, sync says so and stops rather
+than choosing for you.
 
 --memory is how you say which of the two you mean, everywhere. A store keeps
 them in separate trees, so a session may be called `memory` like anything else.\
@@ -1939,25 +2021,14 @@ def main():
                    help="every directory that remembers anything")
     p.set_defaults(func=cmd_memory)
 
-    p = sub.add_parser("save", help="copy a session or memory into a store")
-    p.add_argument("words", nargs="+", metavar="<session> [to] <store>:<dir>")
+    p = sub.add_parser("sync", help="make a session the same in both places")
+    p.add_argument("target", metavar="<store>:<path>")
     p.add_argument("-m", "--memory", action="store_true",
                    help="this directory's memory, not a session")
-    p.add_argument("-f", "--force", action="store_true",
-                   help="overwrite even if the stored copy is longer")
     p.add_argument("--allow-plaintext", action="store_true",
                    help="commit even though the store has no git-crypt")
-    p.set_defaults(func=cmd_save)
+    p.set_defaults(func=cmd_sync)
 
-    p = sub.add_parser("load", help="copy a session or memory into this directory")
-    p.add_argument("target", metavar="<store>:<path>", nargs="+")
-    p.add_argument("-m", "--memory", action="store_true",
-                   help="memory from <store>:<dir>, not a session")
-    p.add_argument("-n", "--name", metavar="<name>",
-                   help="the name to suggest restoring")
-    p.add_argument("-f", "--force", action="store_true",
-                   help="overwrite even if the local copy is longer")
-    p.set_defaults(func=cmd_load)
 
     p = sub.add_parser("move", help="re-file something inside a store")
     p.add_argument("source", metavar="<store>:<path>")

@@ -953,7 +953,7 @@ class BashCompletion(unittest.TestCase):
         for b in self.bashes() or [None]:
             with self.subTest(bash=b):
                 n, got = self.complete(
-                    "ferry load store:",
+                    "ferry sync store:",
                     ["store:alpha/", "store:beta/", "store:gamma/"], b)
                 self.assertEqual(n, 3)
                 self.assertEqual(got, ["alpha/", "beta/", "gamma/"])
@@ -961,11 +961,11 @@ class BashCompletion(unittest.TestCase):
     def test_the_store_prefix_is_trimmed_off(self):
         """bash replaces only the text after the last colon, so only that part
         may be handed back."""
-        _, got = self.complete("ferry load store:be", ["store:acme/"])
+        _, got = self.complete("ferry sync store:be", ["store:acme/"])
         self.assertEqual(got, ["acme/"])          # a folder: no space
 
     def test_a_path_keeps_everything_after_the_colon(self):
-        _, got = self.complete("ferry load store:acme/b",
+        _, got = self.complete("ferry sync store:acme/b",
                                ["store:acme/bug-hunt"])
         self.assertEqual(got, ["acme/bug-hunt "])   # lone match, so a space
 
@@ -976,32 +976,32 @@ class BashCompletion(unittest.TestCase):
     def test_a_finished_word_gets_its_space(self):
         """-o nospace is set for the whole command so a folder can be walked
         into, which otherwise leaves TAB redrawing a finished word forever."""
-        _, got = self.complete("ferry load store:acme/bug",
+        _, got = self.complete("ferry sync store:acme/bug",
                                ["store:acme/bug-hunt"])
         self.assertEqual(got, ["acme/bug-hunt "])
 
     def test_a_folder_does_not_get_one(self):
         """The next TAB has to be able to carry on into it."""
-        _, got = self.complete("ferry load store:acm", ["store:acme/"])
+        _, got = self.complete("ferry sync store:acm", ["store:acme/"])
         self.assertEqual(got, ["acme/"])
 
     def test_a_store_name_does_not_get_one_either(self):
         """`store:` is a store waiting for a path, not a finished word - a
         space there breaks the ref outright."""
-        _, got = self.complete("ferry load --memory priv", ["private:"])
+        _, got = self.complete("ferry sync --memory priv", ["private:"])
         self.assertEqual(got, ["private:"])
 
     def test_nothing_is_appended_while_the_choice_is_open(self):
-        _, got = self.complete("ferry load store:b",
+        _, got = self.complete("ferry sync store:b",
                                ["store:acme/", "store:widgets/"])
         self.assertEqual(got, ["acme/", "widgets/"])
 
     def test_a_lone_command_gets_its_space_too(self):
-        _, got = self.complete("ferry loa", ["load"])
-        self.assertEqual(got, ["load "])
+        _, got = self.complete("ferry syn", ["sync"])
+        self.assertEqual(got, ["sync "])
 
     def test_no_candidates_is_not_an_error(self):
-        n, _ = self.complete("ferry load store:zz", [])
+        n, _ = self.complete("ferry sync store:zz", [])
         self.assertEqual(n, 0)
 
 
@@ -1353,28 +1353,136 @@ class SizeDelta(unittest.TestCase):
         self.assertIn("-90 bytes", f.size_delta(a, b))
 
 
-class RefuseShrink(unittest.TestCase):
-    """Transcripts only grow, so a shorter replacement means lost turns."""
+class Relation(unittest.TestCase):
+    """Which way a sync goes, and when it may not go at all.
 
-    def setUp(self):
-        self.small = tmpfile("x" * 10)
-        self.big = tmpfile("x" * 100)
+    This replaces the old size comparison outright. Comparing bytes said a
+    longer file was the newer one, which is true right up until two machines
+    both append - and then it silently wrote one over the other. Content
+    cannot say that: a copy is only ever replaced by one that holds everything
+    it already held.
+    """
 
-    def test_refuses_a_smaller_source(self):
-        with quiet(), self.assertRaises(SystemExit):
-            f.refuse_shrink(self.small, self.big, False, "saving")
+    def test_the_same_records_are_the_same(self):
+        self.assertEqual(f.relation({1, 2}, {2, 1}), f.SAME)
 
-    def test_allows_a_larger_source(self):
-        f.refuse_shrink(self.big, self.small, False, "saving")
+    def test_holding_everything_theirs_and_more_is_ahead(self):
+        self.assertEqual(f.relation({1, 2, 3}, {1, 2}), f.AHEAD)
 
-    def test_allows_the_same_size(self):
-        f.refuse_shrink(self.small, self.small, False, "saving")
+    def test_holding_less_is_behind(self):
+        self.assertEqual(f.relation({1}, {1, 2}), f.BEHIND)
 
-    def test_force_overrides(self):
-        f.refuse_shrink(self.small, self.big, True, "saving")
+    def test_each_holding_what_the_other_does_not_is_forked(self):
+        self.assertEqual(f.relation({1, 2}, {1, 3}), f.FORKED)
 
-    def test_a_missing_destination_is_fine(self):
-        f.refuse_shrink(self.small, Path("/nonexistent/x.jsonl"), False, "saving")
+    def test_two_empties_are_the_same(self):
+        self.assertEqual(f.relation(set(), set()), f.SAME)
+
+    def test_empty_against_anything_is_behind(self):
+        self.assertEqual(f.relation(set(), {1}), f.BEHIND)
+
+    def test_a_bigger_fork_is_still_a_fork(self):
+        """Size is not the question - this is what the old check got wrong."""
+        self.assertEqual(f.relation(set(range(100)) | {"a"},
+                                    {1, 2, "b"}), f.FORKED)
+
+
+class LineSet(unittest.TestCase):
+    """A transcript as what it holds, rather than as bytes."""
+
+    def test_key_order_is_not_a_difference(self):
+        """Two copies of one custom-title record, same fields and values,
+        written with their keys in a different order. Byte comparison calls
+        that a fork; two real sessions on this machine are exactly it."""
+        a = tmpfile('{"type":"custom-title","sessionId":"s","customTitle":"x"}\n')
+        b = tmpfile('{"type":"custom-title","customTitle":"x","sessionId":"s"}\n')
+        self.assertEqual(f.line_set(a), f.line_set(b))
+        self.assertEqual(f.relation(f.line_set(a), f.line_set(b)), f.SAME)
+
+    def test_a_repeated_record_counts_once(self):
+        """mode and custom-title are written again and again through a session,
+        so a copy holding five of one line knows no more than one holding
+        three."""
+        a = tmpfile('{"type":"mode","mode":"normal"}\n' * 5)
+        b = tmpfile('{"type":"mode","mode":"normal"}\n' * 3)
+        self.assertEqual(f.relation(f.line_set(a), f.line_set(b)), f.SAME)
+
+    def test_an_extra_turn_is_a_difference(self):
+        a = tmpfile('{"uuid":"1","type":"user"}\n{"uuid":"2","type":"user"}\n')
+        b = tmpfile('{"uuid":"1","type":"user"}\n')
+        self.assertEqual(f.relation(f.line_set(a), f.line_set(b)), f.AHEAD)
+
+    def test_a_rename_is_a_difference_too(self):
+        """Renaming appends a record carrying no uuid. Comparing only the
+        conversation would call this in sync and never carry the name over."""
+        a = tmpfile('{"uuid":"1","type":"user"}\n'
+                    '{"type":"custom-title","customTitle":"named"}\n')
+        b = tmpfile('{"uuid":"1","type":"user"}\n')
+        self.assertEqual(f.relation(f.line_set(a), f.line_set(b)), f.AHEAD)
+
+    def test_both_appending_is_a_fork(self):
+        a = tmpfile('{"uuid":"1"}\n{"uuid":"2"}\n')
+        b = tmpfile('{"uuid":"1"}\n{"uuid":"3"}\n')
+        self.assertEqual(f.relation(f.line_set(a), f.line_set(b)), f.FORKED)
+
+    def test_blank_lines_are_not_records(self):
+        a = tmpfile('{"uuid":"1"}\n\n\n')
+        b = tmpfile('{"uuid":"1"}\n')
+        self.assertEqual(f.relation(f.line_set(a), f.line_set(b)), f.SAME)
+
+    def test_an_unparseable_line_is_kept_as_it_stands(self):
+        """It cannot be normalised, but it still has to count as content."""
+        a = tmpfile('{"uuid":"1"}\nnot json at all\n')
+        b = tmpfile('{"uuid":"1"}\n')
+        self.assertEqual(f.relation(f.line_set(a), f.line_set(b)), f.AHEAD)
+
+    def test_a_missing_file_holds_nothing(self):
+        self.assertEqual(f.line_set(Path("/nonexistent/x.jsonl")), set())
+
+
+class ForkMessages(unittest.TestCase):
+    """What a refusal says. It is the only output of a sync that stops, so it
+    has to say enough to act on - and nothing that is untrue."""
+
+    def test_a_session_fork_counts_both_sides(self):
+        msg = f.fork_message("work:acme/bug-hunt", {1, 2}, {3})
+        self.assertIn("2 records the store does not have", msg)
+        self.assertIn("1 record this directory does not have", msg)
+
+    def test_one_record_is_not_plural(self):
+        self.assertIn("1 record the store", f.fork_message("x", {1}, {2}))
+
+    def test_a_note_changed_on_both_sides_is_not_called_missing(self):
+        """It is in the store - it just says something else. Reporting that as
+        "not in the store" sends you looking for a note that is right there."""
+        msg = f.memory_fork_message("mem", {("a.md", "h1")}, {("a.md", "h2")})
+        self.assertIn("changed on both sides: a.md", msg)
+        self.assertNotIn("only here", msg)
+        self.assertNotIn("only there", msg)
+
+    def test_a_note_on_one_side_only_says_which(self):
+        msg = f.memory_fork_message("mem", {("a.md", "h")}, {("b.md", "h")})
+        self.assertIn("only here: a.md", msg)
+        self.assertIn("only there: b.md", msg)
+
+    def test_the_three_kinds_are_kept_apart(self):
+        msg = f.memory_fork_message(
+            "mem",
+            {("both.md", "h1"), ("mine.md", "h")},
+            {("both.md", "h2"), ("theirs.md", "h")})
+        self.assertIn("changed on both sides: both.md", msg)
+        self.assertIn("only here: mine.md", msg)
+        self.assertIn("only there: theirs.md", msg)
+
+    def test_a_long_list_is_cut_short(self):
+        ours = {(f"n{i}.md", "h") for i in range(9)}
+        msg = f.memory_fork_message("mem", ours, {("x.md", "h")})
+        self.assertIn("and more", msg)
+
+    def test_both_say_why_nothing_was_copied(self):
+        for msg in (f.fork_message("x", {1}, {2}),
+                    f.memory_fork_message("x", {("a", "1")}, {("a", "2")})):
+            self.assertIn("losing what is only on one side", msg)
 
 
 class Completion(unittest.TestCase):
@@ -1421,20 +1529,20 @@ class Completion(unittest.TestCase):
 
     def test_offers_the_commands(self):
         got = self.complete("ferry", "")
-        for c in ("add", "save", "load", "list", "update", "sessions",
+        for c in ("add", "sync", "list", "update", "sessions",
                   "memory", "stores"):
             self.assertIn(c, got)
 
     def test_filters_commands_by_prefix(self):
-        self.assertEqual(self.complete("ferry", "lo"), ["load"])
+        self.assertEqual(self.complete("ferry", "sy"), ["sync"])
 
     def test_offers_flags_for_the_command(self):
-        got = self.complete("ferry", "save", "x", "-")
+        got = self.complete("ferry", "sync", "x", "-")
         self.assertIn("--memory", got)
         self.assertIn("--allow-plaintext", got)
 
     def test_does_not_offer_another_commands_flags(self):
-        self.assertNotIn("--allow-plaintext", self.complete("ferry", "load", "-"))
+        self.assertNotIn("--allow-plaintext", self.complete("ferry", "list", "-"))
 
     def complete_line(self, line):
         sys.argv = ["ferry", "complete", "--line", line]
@@ -1444,41 +1552,24 @@ class Completion(unittest.TestCase):
 
     def test_line_mode_keeps_a_colon_ref_whole(self):
         """bash splits on ':', so the line is parsed here instead."""
-        self.assertEqual(self.complete_line("ferry lo"), ["load"])
+        self.assertEqual(self.complete_line("ferry sy"), ["sync"])
 
     def test_line_mode_knows_a_trailing_space_starts_a_new_word(self):
-        self.assertEqual(self.complete_line("ferry lo "), [])
+        self.assertEqual(self.complete_line("ferry sy "), [])
 
     def test_line_mode_survives_an_unbalanced_quote(self):
-        self.complete_line("ferry save \"unclosed")
+        self.complete_line("ferry sync \"unclosed")
 
-    def test_save_offers_this_directorys_sessions_first(self):
-        """The first word of `save` is a conversation here, not a store ref -
-        it was offering stores, which are what the *second* word takes."""
-        old = f.names_here
-        f.names_here = lambda where: {"bug-hunt": None, "cto": None}
-        try:
-            self.assertEqual(self.complete_line("ferry save "),
-                             ["bug-hunt", "cto"])
-            self.assertEqual(self.complete_line("ferry save c"), ["cto"])
-        finally:
-            f.names_here = old
+    def test_sync_offers_what_the_store_holds(self):
+        """One ref, and it is a store ref - there is no first word naming a
+        session here, because the store path carries the name."""
+        got = self.complete_line("ferry sync store:")
+        self.assertTrue(all(g.startswith("store:") for g in got), got)
 
-    def test_save_offers_the_connector_and_store_after_that(self):
-        got = self.complete_line("ferry save bug-hunt ")
-        self.assertIn("to", got)
-
-    def test_save_memory_has_no_session_argument(self):
-        """--memory takes no session, so the first word is already the
-        destination."""
-        old = f.names_here
-        f.names_here = lambda where: {"bug-hunt": None}
-        try:
-            self.assertNotIn("bug-hunt", self.complete_line("ferry save --memory "))
-            self.assertIn("to", self.complete_line("ferry save --memory "))
-        finally:
-            f.names_here = old
-
+    def test_sync_memory_offers_folders(self):
+        """--memory says which of the two trees, the same as everywhere else."""
+        got = self.complete_line("ferry sync --memory store:")
+        self.assertTrue(all(g.startswith("store:") for g in got), got)
     def test_a_short_flag_never_means_two_things(self):
         """-m is --memory in four commands. A fifth where it meant --media
         would be worse than having no short form there at all."""
@@ -1523,12 +1614,13 @@ class Completion(unittest.TestCase):
                 self.assertEqual(self.status_of(line), f.FILES)
 
     def test_a_name_you_invent_gets_nothing_at_all(self):
-        """--name is a name you are about to make up: no candidate, and no
-        filename either."""
-        for line in ("ferry load --name ", "ferry load -n ",
-                     "ferry load --name half-typed"):
+        """The second word of `name` is one you are about to make up, so
+        nothing is offered - and in particular not a filename, which is what
+        an empty answer would otherwise fall back to."""
+        for line in ("ferry name 6af148fd ", "ferry name 6af148fd half-typed"):
             with self.subTest(line=line):
-                self.assertEqual(self.status_of(line), f.NOTHING)
+                self.assertEqual(self.complete_line(line), [])
+                self.assertNotEqual(self.status_of(line), f.FILES)
 
     def test_a_command_taking_no_arguments_says_so(self):
         """`ferry stores <TAB>` offering filenames is noise - nothing goes
@@ -1538,13 +1630,9 @@ class Completion(unittest.TestCase):
                 self.assertEqual(self.status_of(line), f.NOTHING)
 
     def test_an_ordinary_position_answers_normally(self):
-        for line in ("ferry load ", "ferry ", "ferry save "):
+        for line in ("ferry sync ", "ferry ", "ferry list "):
             with self.subTest(line=line):
                 self.assertEqual(self.status_of(line), 0)
-
-    def test_completion_resumes_after_the_value(self):
-        got = self.complete_line("ferry load --name x ")
-        self.assertEqual(got, ["work:"])
 
     def test_sessions_completes_directories(self):
         """The argument is a directory, so the ones holding sessions are the
@@ -1560,9 +1648,9 @@ class Completion(unittest.TestCase):
 
     def test_a_short_flag_reaches_completion_too(self):
         """`-m` and `--memory` are the same flag, and completion only knew the
-        long one - so `ferry load -m store:` completed as though it had not
+        long one - so `ferry sync -m store:` completed as though it had not
         been given at all."""
-        for short, long in (("ferry load -m work:", "ferry load --memory work:"),
+        for short, long in (("ferry sync -m work:", "ferry sync --memory work:"),
                             ("ferry export -a work:", "ferry export --all work:")):
             with self.subTest(line=short):
                 self.assertEqual(self.complete_line(short),
@@ -1651,13 +1739,10 @@ class Completion(unittest.TestCase):
         argparse. This walks all three spellings of the ones that change what
         is offered."""
         for long, short, cluster in (
-                ("ferry load --memory work:", "ferry load -m work:",
-                 "ferry load -mf work:"),
+                ("ferry sync --memory work:", "ferry sync -m work:", None),
                 ("ferry list --memory work:", "ferry list -m work:", None),
                 ("ferry move --memory work:", "ferry move -m work:",
                  "ferry move -mf work:"),
-                ("ferry save --memory to work:", "ferry save -m to work:",
-                 "ferry save -mf to work:"),
                 ("ferry export --memory ", "ferry export -m ",
                  "ferry export -tm "),
                 ("ferry sessions --all ", "ferry sessions -a ",
@@ -1678,14 +1763,9 @@ class Completion(unittest.TestCase):
                      "ferry export -m y --media "):
             with self.subTest(line=line):
                 self.assertEqual(self.status_of(line), f.FILES)
-        for line in ("ferry load --name ", "ferry load -n "):
-            with self.subTest(line=line):
-                self.assertEqual(self.status_of(line), f.NOTHING)
 
     def test_a_flag_that_changes_nothing_changes_nothing(self):
-        for plain, flagged in (("ferry load work:", "ferry load -f work:"),
-                               ("ferry load work:", "ferry load --force work:"),
-                               ("ferry export work:", "ferry export -r work:"),
+        for plain, flagged in (("ferry export work:", "ferry export -r work:"),
                                ("ferry export work:", "ferry export -t work:")):
             with self.subTest(line=flagged):
                 self.assertEqual(self.complete_line(flagged),
@@ -1704,15 +1784,15 @@ class Completion(unittest.TestCase):
         self.assertIn("work:acme", mem)
 
     def test_memory_flag_completes(self):
-        self.assertEqual(self.complete_line("ferry load --mem"), ["--memory"])
+        self.assertEqual(self.complete_line("ferry sync --mem"), ["--memory"])
 
-    def test_load_and_load_memory_are_mirror_images(self):
+    def test_sync_and_sync_memory_are_mirror_images(self):
         """Neither should offer what the other takes."""
-        plain = self.complete_line("ferry load work:")
-        mem = self.complete_line("ferry load --memory work:")
+        plain = self.complete_line("ferry sync work:")
+        mem = self.complete_line("ferry sync --memory work:")
         self.assertTrue(plain and mem)
         self.assertFalse([c for c in plain if c.endswith("/memory")],
-                         "plain load offered a memory directory")
+                         "plain sync offered a memory directory")
         self.assertFalse([c for c in mem if c.endswith("/memory")],
                          "--memory offered the memory/ instead of its parent")
 
@@ -1727,7 +1807,7 @@ class CommandLine(unittest.TestCase):
         self.calls = []
         self.originals = {}
         for name in ("cmd_add", "cmd_stores", "cmd_sessions", "cmd_memory",
-                     "cmd_save", "cmd_load", "cmd_move", "cmd_list",
+                     "cmd_sync", "cmd_move", "cmd_list",
                      "cmd_update", "cmd_export"):
             self.originals[name] = getattr(f, name)
             setattr(f, name, lambda args, n=name: self.calls.append((n, args)))
@@ -1745,8 +1825,7 @@ class CommandLine(unittest.TestCase):
     def test_the_shorts_actually_parse(self):
         for argv, attr in ((["sessions", "-g"], "global_"),
                            (["sessions", "-a"], "all"),
-                           (["save", "-m", "to", "work:x"], "memory"),
-                           (["load", "-f", "work:x/y"], "force"),
+                           (["sync", "-m", "work:x"], "memory"),
                            (["export", "-t", "x"], "tools"),
                            (["export", "-r", "x"], "raw")):
             with self.subTest(argv=argv):
@@ -1756,33 +1835,34 @@ class CommandLine(unittest.TestCase):
     def test_bare_ferry_prints_help(self):
         out, _ = self.run_ferry()
         self.assertIn("usage:", out)
-        self.assertIn("ferry save", out)
+        self.assertIn("ferry sync", out)
         self.assertEqual(self.calls, [])
 
-    def test_save_drops_the_word_to(self):
-        self.run_ferry("save", "bug-hunt", "to", "work:acme")
+    def test_sync_takes_one_ref(self):
+        self.run_ferry("sync", "work:acme/bug-hunt")
         name, args = self.calls[0]
-        self.assertEqual(name, "cmd_save")
-        self.assertEqual(args.words, ["bug-hunt", "to", "work:acme"])
+        self.assertEqual(name, "cmd_sync")
+        self.assertEqual(args.target, "work:acme/bug-hunt")
         self.assertFalse(args.memory)
 
-    def test_save_works_without_to(self):
-        self.run_ferry("save", "bug-hunt", "work:acme")
-        self.assertEqual(self.calls[0][1].words, ["bug-hunt", "work:acme"])
-
-    def test_save_memory_is_a_flag(self):
-        self.run_ferry("save", "--memory", "to", "work:acme")
-        self.assertTrue(self.calls[0][1].memory)
-
-    def test_load_memory_is_a_flag(self):
-        self.run_ferry("load", "--memory", "work:acme")
+    def test_sync_memory_is_a_flag(self):
+        self.run_ferry("sync", "--memory", "work:acme")
         name, args = self.calls[0]
-        self.assertEqual(name, "cmd_load")
+        self.assertEqual(name, "cmd_sync")
         self.assertTrue(args.memory)
 
-    def test_load_drops_the_word_to(self):
-        self.run_ferry("load", "work:acme/bug-hunt")
-        self.assertEqual(self.calls[0][1].target, "work:acme/bug-hunt")
+    def test_sync_refuses_a_second_argument(self):
+        """The old grammar took a session and a destination. One ref now, so
+        the second word is a mistake and has to be said so."""
+        with quiet(), self.assertRaises(SystemExit):
+            self.run_ferry("sync", "bug-hunt", "work:acme")
+
+    def test_sync_has_no_force(self):
+        """Every path either loses nothing or stops. There is nothing for a
+        force flag to mean that is not 'overwrite what I could not reason
+        about'."""
+        with quiet(), self.assertRaises(SystemExit):
+            self.run_ferry("sync", "--force", "work:acme/x")
 
     def test_move_takes_two_refs(self):
         self.run_ferry("move", "work:acme/bug-hunt", "work:beta")

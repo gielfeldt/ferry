@@ -9,12 +9,15 @@ Memory travels the same way.
 
 ```sh
 # on the laptop that has the session
-ferry save bug-hunt to work:acme
+ferry sync work:acme/bug-hunt
 
-# on the other one
-ferry load work:acme/bug-hunt
+# on the other one — same command
+ferry sync work:acme/bug-hunt
 claude --resume bug-hunt
 ```
+
+One command, both directions. ferry works out which way it needs to go from
+what each copy holds, and refuses rather than guess when both have moved.
 
 ## Install
 
@@ -36,7 +39,7 @@ Or just drop the single `ferry` file anywhere on your `PATH`.
 No packages to install, no runtime, no daemon, nothing running in the
 background.
 
-git-crypt is not optional in practice. Without it `save` refuses rather than
+git-crypt is not optional in practice. Without it `sync` refuses rather than
 committing your conversations in the clear, and a store whose clone is locked
 will fail to load from, because what is on disk is ciphertext. `ferry add
 <name> --key <file>` is what unlocks a clone.
@@ -61,7 +64,7 @@ ferry add work git@github.com:you/sessions.git --key ~/sessions.key
 # use it
 cd ~/develop/acme
 ferry sessions                           # what can I send?
-ferry save bug-hunt to work:acme
+ferry sync work:acme/bug-hunt
 ```
 
 `--key` hands your key to `git-crypt unlock`; ferry stores no keys itself.
@@ -78,10 +81,8 @@ ferry remove <store> [--force]
 ferry sessions [<dir>] [--global] [--all]
 ferry name <session>|<dir>:<session> <name>
 ferry memory [<dir>] [--global]
-ferry save <session> [to] <store>:<dir> [--force]
-ferry save --memory [to] <store>:<dir> [--force]
-ferry load <store>:<path> [--force]
-ferry load --memory <store>:<dir> [--force]
+ferry sync <store>:<path>
+ferry sync --memory <store>:<dir>
 ferry move <store>:<path> <store>:<dir> [--force]
 ferry move --memory <store>:<dir> <store>:<dir> [--force]
 ferry export <session>|<store>:<path>|<dir>:<session>
@@ -108,14 +109,12 @@ ferry memory                                  # notes in this directory
 ferry memory ~/develop/acme                   # notes in another
 ferry memory --global                         # every directory that remembers
 
-ferry save bug-hunt to work:acme              # -> acme/bug-hunt.jsonl
-ferry save --memory to work:acme              # -> acme/memory/
+ferry sync work:acme/bug-hunt                 # a session, either direction
+ferry sync --memory work:acme                 # that folder's notes
 
 ferry list work                               # its sessions
 ferry list --memory work                      # its memory
 ferry list --memory work:acme                 # the notes in one folder
-ferry load work:acme/bug-hunt                 # a session
-ferry load --memory work:acme                 # that folder's memory
 ferry update work                             # pull, and explain a divergence
 
 ferry export bug-hunt                         # read it, as markdown
@@ -133,33 +132,39 @@ ferry move --memory work:acme work:acme-v2    # -> acme-v2/memory
 ## Concepts
 
 **Everything is relative to the directory you are standing in.** Claude Code
-files transcripts by working directory, so `sessions`, `save` and `load` act on
+files transcripts by working directory, so `sessions` and `sync` act on
 the current one. `cd` to where you were working. The exceptions say so out loud: `sessions` takes a directory to look in
 instead, `sessions --global` looks everywhere, and `export` takes a ref that
 can name another directory. A directory only says *where* — the flags go on
 meaning what they mean, so `ferry sessions ~/develop/acme` lists the named
 ones there and `--all` still widens it.
 
-**A session is filed under its own name.** `save` takes a *directory* and names
-the file after the session, so one conversation has one name on every machine.
-The name comes from `/rename`, `/branch` or `claude -n`, and is recorded inside
-the transcript — so it travels with the session, and a loaded one answers to it
-straight away. A session with no name cannot be saved; there would be nothing to
-call it.
+**A session is filed under its own name**, so one conversation has one name on
+every machine. The name comes from `/rename`, `/branch` or `claude -n`, and is
+recorded inside the transcript — so it travels with the session, and one that
+arrives from a store answers to it straight away. A session with no name cannot
+be sent; there would be nothing to call it.
 
 `ferry name` sets one without resuming the session, by appending the record
 Claude Code would have written — which matters for an old conversation you want
 to file but not reopen. Local sessions only: in a store the file *is* named
 after the session, so naming one there would leave the two disagreeing.
 
-**`load` takes a whole path**, because there you are choosing among what the
-store holds rather than deciding where something goes.
+**`sync` works out its own direction.** You give it one ref — the whole path in
+the store — and it compares what each copy holds. Whichever holds everything the
+other holds, and more, is the one that gets copied. A copy is never replaced by
+one holding less, so there is no direction to get wrong and no flag to get
+wrong either.
+
+When each copy holds something the other does not, neither can be written
+without dropping it, and `sync` says so and stops. That is the only case it
+will not handle, and it is the case worth stopping for.
 
 **`move` re-files, it does not rename.** It takes a path and a directory, and
-the leaf goes along unchanged — the same rule `save` follows. A session's name
-lives inside its transcript, so a move that could rename the file would let the
-two disagree; not being able to say a new name means it cannot happen. To
-rename, `/rename` the session and save it again.
+the leaf goes along unchanged. A session's name lives inside its transcript, so
+a move that could rename the file would let the two disagree; not being able to
+say a new name means it cannot happen. To rename, `/rename` the session and
+sync it again.
 
 **Memory belongs to a directory, not a session.** Claude keeps it in
 `memory/*.md` beside the transcripts, shared by everything started there. So
@@ -180,10 +185,9 @@ ferry export --memory work:acme/role
 sessions and memory in separate trees, so nothing has to be inferred from a
 path — and a session may be called `memory` like anything else.
 
-**`export` reads from anywhere.** Every other command goes one way — `save`
-out of here, `load` into here — so which end a ref names is never in doubt.
-Reading is the same question wherever the conversation sits, so a ref can name
-three things:
+**`export` reads from anywhere.** `sync` decides its own direction, but it
+always names a place in the store; reading is the same question wherever the
+conversation sits, so an export ref can name three things:
 
 ```sh
 ferry export bug-hunt                     # this directory
@@ -207,7 +211,7 @@ comes out as 95 KB — because tool results are the bulk of any real session.
 they are noted where they appeared, and written out beside it with `--media`.
 
 **A session with no name is not listed by default.** It cannot be named in a
-ref — `save` refuses it and `<dir>:<name>` has nothing to match — so listing it
+ref — `sync` refuses it and `<dir>:<name>` has nothing to match — so listing it
 offers you something you cannot then act on, and completion would walk you into
 directories with nothing behind them. `--all` brings them back, addressed by
 their full id, which is the only handle they have — with whatever Claude
@@ -223,13 +227,13 @@ half of one. Those three take a lock while they read and change it, so two at
 once cannot undo each other; the lock covers the rewrite only, never a clone
 or a push, and a second ferry waits a few seconds and then says so rather than
 hanging. Memory is replaced the same way: copied alongside and swapped, so
-stopping a `load --memory` part-way leaves the notes you had.
+stopping a `sync --memory` part-way leaves the notes you had.
 
 **The registry is a list of names, and only that.** `ferry remove` forgets a
 name; it does not delete the checkout, because ferry did not put most of what
 is in there and cannot know whether you want it. It tells you where the
 directory is, and refuses outright when that directory holds something the
-remote has not got — an unpushed save, uncommitted changes, or no remote at
+remote has not got — an unpushed sync, uncommitted changes, or no remote at
 all — since forgetting the name would turn those into a path you had to
 remember. `--force` overrides it. `ferry rename` takes the checkout with it
 when ferry made it, and leaves one you adopted where you put it.
@@ -266,7 +270,7 @@ sessions/acme/bug-hunt.jsonl     a transcript - the filename is its name
 memories/acme/*.md               a directory's memory, as notes
 ```
 
-You never type `sessions/` or `memories/` — `ferry save bug-hunt to work:acme`
+You never type `sessions/` or `memories/` — `ferry sync work:acme/bug-hunt`
 and `ferry list work` say `acme`, as they always did. The split is there so the
 two cannot interfere: memory is written by replacing its directory wholesale,
 and in one shared tree that would take any transcript filed beside it with it.
@@ -276,18 +280,22 @@ The cost is that `ferry list` no longer matches `git ls-files`; prefix a path
 with its tree when working in the checkout by hand. `ferry move` re-files
 something and pushes the commit; deleting is still `git rm` there.
 
-`save` and `move` write to the remote; nothing else does. `load`, `list`,
-`export` and `update` never push, and `list` fetches without merging so it can
-always show what is really there, even when your clone has diverged.
+`sync` and `move` write to the remote — `sync` only when this machine's copy
+is the one holding more. `list`, `export` and `update` never push, and `list`
+fetches without merging so it can always show what is really there, even when
+your clone has diverged.
 
 ## Limitations
 
-- **Copies, not sync.** Saving replaces the store's copy with yours; loading
-  replaces yours with the store's. No merging, and nothing happens on its own.
-- **Memory is replaced wholesale**, so notes that exist only on the other
-  machine are lost when you save over them. Only notes: transcripts are in
-  another tree and cannot be caught by it.
+- **No merging.** `sync` copies whole, in whichever direction loses nothing.
+  When both copies have moved it stops and says so; joining them back up is
+  yours to do, for now.
+- **Memory is replaced wholesale**, so a note is compared by its name and its
+  contents together. A note edited on both machines is a fork, and stops the
+  sync rather than being merged.
 - **Collisions are caught, not resolved.** ferry stops and tells you.
+- **Nothing happens on its own.** No daemon, no watcher, no hook: ferry moves
+  exactly what you name, when you name it.
 - **git-crypt hides contents, not names.** Directory and file names, sizes and
   commit messages stay readable, so keep the store private.
 
@@ -314,9 +322,8 @@ fpath=(~/.local/share/zsh/site-functions $fpath)
 ```
 
 Completes commands, each command's flags, store references and session names.
-`ferry load work:<TAB>` walks what the store holds, one level at a time like
-filename completion; `ferry save <TAB>` offers the named sessions in the
-directory you are standing in; `ferry export <TAB>` adds the directories that
+`ferry sync work:<TAB>` walks what the store holds, one level at a time like
+filename completion; `ferry export <TAB>` adds the directories that
 hold sessions, ready for a name after the colon; and `--memory` changes what is
 offered, because it changes which of the store's two trees is being asked
 about. `--all` widens the last two to sessions that have no name, offered by
@@ -361,8 +368,8 @@ Opt-in either way. It is not installed for you: `~/.claude` belongs to Claude
 Code, and a skill shapes what Claude does in conversations that have nothing to
 do with ferry — your decision rather than an installer's.
 
-The skill reads and never writes. It will tell you the `ferry save`,
-`ferry load` or `ferry name` command to run, and leave the running to you.
+The skill reads and never writes. It will tell you the `ferry sync` or
+`ferry name` command to run, and leave the running to you.
 
 ## Contributing
 

@@ -44,10 +44,12 @@ scripts for real. Nothing else: no network, no git repo, no store, and never you
 `~/.claude` — anything that would need one builds a temporary copy, and the
 few that want a registered store skip when there is none.
 
-What that leaves uncovered is worth knowing: `add`, `save`, `load`, `move`,
-`list` and `update` are exercised only as far as their argument parsing, with
-the command itself stubbed out. Nothing drives them against a real store, so
-bugs in what they actually do to files and git have to be caught by hand.
+What that leaves uncovered is worth knowing: `add`, `sync`, `move`, `list` and
+`update` are exercised only as far as their argument parsing, with the command
+itself stubbed out — though `sync`'s decision, which is the part that could
+lose work, is covered directly in `Relation` and `LineSet`. Nothing drives the
+commands against a real store, so bugs in what they actually do to files and
+git have to be caught by hand.
 
 To drive the untested ones for real, point a throwaway store at a plain git
 repo and work from a directory that already has sessions in it:
@@ -58,7 +60,7 @@ git -C /tmp/store commit -q --allow-empty -m init
 
 HOME=/tmp/home ferry add throwaway --path /tmp/store
 cd ~/somewhere/with/sessions
-ferry save some-session to throwaway:proj --allow-plaintext
+ferry sync throwaway:proj/some-session --allow-plaintext
 ferry list throwaway
 ferry export throwaway:proj/some-session | head
 ```
