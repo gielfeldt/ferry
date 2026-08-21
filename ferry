@@ -1478,6 +1478,26 @@ def given(words, long, short):
     return False
 
 
+def positionals(words):
+    """The words that are arguments, with flags and their values dropped.
+
+    Which argument you are typing is decided by counting these, so a flag's
+    value must not be counted as one. It was: `ferry export --media /tmp/pics
+    work:<TAB>` counted /tmp/pics as the ref and offered nothing at all, on a
+    command line that is otherwise perfectly good.
+    """
+    out, skip = [], False
+    for w in words:
+        if skip:
+            skip = False                    # this word is the flag's value
+            continue
+        if w.startswith("-"):
+            skip = w in FILE_FLAGS
+            continue
+        out.append(w)
+    return out
+
+
 def cmd_complete(args):
     """Emit completion candidates. Driven by the shell, not by you.
 
@@ -1494,7 +1514,7 @@ def cmd_complete(args):
         if args.line[-1:].isspace():
             words.append("")
     cur = words[-1] if words else ""
-    prev = [w for w in words[:-1] if not w.startswith("-")]
+    prev = positionals(words[:-1])
 
     # A flag that takes a file: let the shell complete filenames, which it
     # does better than ferry could.

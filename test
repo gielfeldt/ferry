@@ -1440,6 +1440,43 @@ class LineSet(unittest.TestCase):
         self.assertEqual(f.line_set(Path("/nonexistent/x.jsonl")), set())
 
 
+class Positionals(unittest.TestCase):
+    """Which argument you are typing, counted from the words before it.
+
+    A flag's value used to count as an argument, so `ferry export --media
+    /tmp/pics work:<TAB>` thought it was one ref further along than it was and
+    offered nothing at all - on a command line that is otherwise perfectly
+    good.
+    """
+
+    def test_a_bare_flag_is_not_an_argument(self):
+        self.assertEqual(f.positionals(["ferry", "sync", "-m"]),
+                         ["ferry", "sync"])
+
+    def test_a_flags_value_is_not_one_either(self):
+        self.assertEqual(f.positionals(["ferry", "export", "--media", "/tmp/x"]),
+                         ["ferry", "export"])
+
+    def test_the_short_spelling_too(self):
+        for flag in ("-k", "--key", "-p", "--path"):
+            with self.subTest(flag=flag):
+                self.assertEqual(f.positionals(["ferry", "add", "n", flag, "/f"]),
+                                 ["ferry", "add", "n"])
+
+    def test_a_flag_taking_no_value_does_not_eat_the_next_word(self):
+        """--memory is a switch, so what follows it is the argument."""
+        self.assertEqual(f.positionals(["ferry", "export", "-m", "acme"]),
+                         ["ferry", "export", "acme"])
+
+    def test_a_value_joined_by_equals_is_one_word(self):
+        """--key=/k carries its value already, so nothing may be skipped."""
+        self.assertEqual(f.positionals(["ferry", "add", "n", "--key=/k"]),
+                         ["ferry", "add", "n"])
+
+    def test_nothing_at_all_is_nothing(self):
+        self.assertEqual(f.positionals([]), [])
+
+
 class ForkMessages(unittest.TestCase):
     """What a refusal says. It is the only output of a sync that stops, so it
     has to say enough to act on - and nothing that is untrue."""
@@ -1633,6 +1670,16 @@ class Completion(unittest.TestCase):
         for line in ("ferry sync ", "ferry ", "ferry list "):
             with self.subTest(line=line):
                 self.assertEqual(self.status_of(line), 0)
+
+    def test_a_flags_value_does_not_shift_the_argument(self):
+        """The bug this guards: --media took a directory, and the word after it
+        was counted as the ref, so the real ref was never completed."""
+        for flagged, plain in (
+                ("ferry export --media /tmp/pics work:", "ferry export work:"),
+                ("ferry add n --key /tmp/k ", "ferry add n ")):
+            with self.subTest(line=flagged):
+                self.assertEqual(self.complete_line(flagged),
+                                 self.complete_line(plain))
 
     def test_sessions_completes_directories(self):
         """The argument is a directory, so the ones holding sessions are the
