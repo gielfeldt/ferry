@@ -1106,24 +1106,24 @@ print -r -- "RC=$?"
 
     def test_a_folder_is_offered_without_a_space(self):
         """So the next TAB can carry on into it."""
-        _, added, _ = self.complete("ferry load private:",
+        _, added, _ = self.complete("ferry sync private:",
                                     ["private:acme/", "private:widgets/"])
         self.assertEqual(added, [(1, "private:acme/"), (1, "private:widgets/")])
 
     def test_a_store_name_is_offered_without_one_either(self):
         """`store:` is a store waiting for a path, not a finished word."""
-        _, added, _ = self.complete("ferry load --memory pri", ["private:"])
+        _, added, _ = self.complete("ferry sync --memory pri", ["private:"])
         self.assertEqual(added, [(1, "private:")])
 
     def test_a_finished_ref_gets_the_cursor_moved_on(self):
-        _, added, _ = self.complete("ferry load private:acme/b",
+        _, added, _ = self.complete("ferry sync private:acme/b",
                                     ["private:acme/bug-hunt"])
         self.assertEqual(added, [(0, "private:acme/bug-hunt")])
 
     def test_the_two_kinds_are_added_separately(self):
         """One compadd call cannot say both, so a mixed list has to split."""
         _, added, _ = self.complete(
-            "ferry load private:a", ["private:acme/", "private:agenda"])
+            "ferry sync private:a", ["private:acme/", "private:agenda"])
         self.assertEqual(sorted(added), [(0, "private:agenda"),
                                         (1, "private:acme/")])
 
@@ -1136,7 +1136,7 @@ print -r -- "RC=$?"
         self.assertEqual((rc, added), (1, []))
 
     def test_an_empty_list_is_not_an_error(self):
-        rc, added, err = self.complete("ferry load private:zz", [], exit=0)
+        rc, added, err = self.complete("ferry sync private:zz", [], exit=0)
         self.assertEqual(added, [])
         self.assertEqual(err, "")
 
