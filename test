@@ -1796,9 +1796,76 @@ class LocalState(unittest.TestCase):
         self.assertEqual(f.local_state(stored, "bug-hunt", f.local_index())[1],
                          f.UNREADABLE)
 
+    def test_a_directory_that_is_not_there_is_not_named(self):
+        """The transcript's own folder is ~/.claude/projects/<slug>, which is
+        where the file sits and never where you would stand to use it. When the
+        real directory cannot be worked out, the state is still worth saying
+        and the location is not."""
+        self.here("-tmp-a")
+        f.session_cwd = lambda p: None
+        stored = tmpfile(self.BODY, name="bug-hunt")
+        where, state, _ = f.local_state(stored, "bug-hunt", f.local_index())
+        self.assertIsNone(where)
+        self.assertEqual(state, "in sync")
+
     def test_an_unnamed_local_session_is_not_indexed(self):
         self.here("-tmp-a", '{"sessionId":"abc","uuid":"1"}\n')
         self.assertEqual(f.local_index(), {})
+
+
+class ListSymmetry(unittest.TestCase):
+    """Both listings put a usable ref on each side of the row.
+
+    `sessions` names the session and ends with its store ref; `list` names the
+    store ref and ends with <dir>:<name>. The name is on both sides either way,
+    and both trailing forms are refs ferry takes as they stand.
+    """
+
+    def setUp(self):
+        self.root = Path(tempfile.mkdtemp())
+        self.proj = Path(tempfile.mkdtemp())
+        self.work = Path(tempfile.mkdtemp())
+        (self.root / "sessions" / "acme").mkdir(parents=True)
+        self._repos, self._cp, self._cwd = f.repos, f.CLAUDE_PROJECTS, f.session_cwd
+        f.repos = lambda: {"s": {"path": str(self.root)}}
+        f.CLAUDE_PROJECTS = self.proj
+        f.session_cwd = lambda p: str(self.work)
+
+    def tearDown(self):
+        f.repos, f.CLAUDE_PROJECTS, f.session_cwd = \
+            self._repos, self._cp, self._cwd
+
+    BODY = ('{"sessionId":"abc","uuid":"1"}\n'
+            '{"type":"custom-title","customTitle":"bug-hunt","sessionId":"abc"}\n')
+
+    def both(self, folder):
+        d = self.root / "sessions" / folder if folder else self.root / "sessions"
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "bug-hunt.jsonl").write_text(self.BODY)
+        p = self.proj / "-tmp-a"
+        p.mkdir(parents=True, exist_ok=True)
+        (p / "abc.jsonl").write_text(self.BODY)
+
+    def listing(self, ref):
+        sys.argv = ["ferry", "list", ref]
+        with quiet() as (out, _):
+            try:
+                f.main()
+            except SystemExit:
+                pass
+        return out.getvalue()
+
+    def test_the_local_side_carries_the_name(self):
+        self.both("acme")
+        self.assertIn(f"{f.tilde(str(self.work))}:bug-hunt", self.listing("s:acme"))
+
+    def test_a_session_at_the_top_of_a_store_too(self):
+        """No folder means no slash in the ref, so a name taken from the ref
+        by splitting on one would come back as the whole ref."""
+        self.both(None)
+        out = self.listing("s:")
+        self.assertIn(f"{f.tilde(str(self.work))}:bug-hunt", out)
+        self.assertNotIn("s:bug-hunt:", out)
 
 
 class ForkMessages(unittest.TestCase):

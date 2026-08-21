@@ -161,9 +161,13 @@ stored session, the directory on this machine that has it, and how that copy
 relates:
 
 ```
-work:acme/bug-hunt    1.6 MB  2026-08-17  forked   ~/develop/acme
+work:acme/bug-hunt    1.6 MB  2026-08-17  forked   ~/develop/acme:bug-hunt
 work:acme/deploy-fix  0.5 MB  2026-08-17  —
 ```
+
+Each row carries a usable ref at both ends — the store's on the left, this
+machine's on the right — so the name is on both sides, and either can be
+pasted straight into `ferry export`.
 
 The state always describes the copy on **this** machine, so "ahead" means the
 same thing in both listings. One stored session can be brought down in several

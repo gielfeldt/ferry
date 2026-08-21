@@ -1391,7 +1391,12 @@ def local_state(stored, name, index):
     # it cannot is the transcript read for a cwd, which on a large one costs
     # more than everything else here put together.
     where = from_slug(worst.parent.name) or session_cwd(worst)
-    return where or str(worst.parent), label, len(seen) - 1
+    # Only a directory that is really there. The transcript's own folder is
+    # ~/.claude/projects/<slug>, which is where the file sits but never where
+    # you would stand to use it - printing that as the answer would be sending
+    # you somewhere you cannot work.
+    return (where if where and Path(where).is_dir() else None), label, \
+        len(seen) - 1
 
 
 def list_one(alias, path, memory):
@@ -1430,14 +1435,19 @@ def list_one(alias, path, memory):
             rel = of_store(disk)[:-6]
             where, state, extra = local_state(f, f.stem, index)
             rows.append((f"{alias}:{rel}", f.stat().st_size,
-                         dates.get(disk, ""), where, state or "", extra))
+                         dates.get(disk, ""), where, state or "", extra,
+                         f.stem))
         refs = max((len(r[0]) for r in rows), default=0)
         states = max((len(r[4]) for r in rows), default=0)
-        for ref, size, when, where, state, extra in rows:
+        for ref, size, when, where, state, extra, name in rows:
             # The state describes the copy on this machine, the same way it
             # does in `sessions` - "ahead" is always this machine having more.
-            tail = f"{tilde(where)}{f'  +{extra}' if extra else ''}" if where \
-                else ""
+            #
+            # <dir>:<name>, not the bare directory: it is the same shape as the
+            # store ref beside it, with the name on both sides, and it is a ref
+            # in its own right - `ferry export` takes it as it stands.
+            tail = (f"{tilde(where)}:{name}"
+                    + (f"  +{extra}" if extra else "")) if where else ""
             print(f"  {ref:<{refs}} {size/1e6:6.1f} MB  {when}  "
                   f"{state or NOWHERE:<{states}}  {tail}".rstrip())
 
