@@ -1707,6 +1707,100 @@ class SyncedRefs(unittest.TestCase):
         self.assertEqual(merged.count("s:acme/bug-hunt"), 1)
 
 
+class LocalState(unittest.TestCase):
+    """What `ferry list` says about a stored session: which directory on this
+    machine has it, and how that copy relates to the store's.
+
+    The mirror of what `sessions` shows. One stored session can be brought
+    down in several directories - sync writes to wherever you are standing -
+    so this is one-to-many, and the listing has room for one verdict.
+    """
+
+    def setUp(self):
+        self.proj = Path(tempfile.mkdtemp())
+        self._cp, self._cwd = f.CLAUDE_PROJECTS, f.session_cwd
+        f.CLAUDE_PROJECTS = self.proj
+        f.session_cwd = lambda p: str(p.parent)
+
+    def tearDown(self):
+        f.CLAUDE_PROJECTS, f.session_cwd = self._cp, self._cwd
+
+    BODY = ('{"sessionId":"abc","uuid":"1"}\n'
+            '{"type":"custom-title","customTitle":"bug-hunt","sessionId":"abc"}\n')
+
+    def here(self, folder, text=None):
+        d = self.proj / folder
+        d.mkdir(parents=True, exist_ok=True)
+        p = d / "abc.jsonl"
+        p.write_text(text if text is not None else self.BODY)
+        return p
+
+    def test_a_stored_session_this_machine_does_not_have(self):
+        stored = tmpfile(self.BODY, name="bug-hunt")
+        self.assertEqual(f.local_state(stored, "bug-hunt", f.local_index()),
+                         (None, None, 0))
+
+    def test_one_copy_that_matches(self):
+        self.here("-tmp-a")
+        stored = tmpfile(self.BODY, name="bug-hunt")
+        where, state, extra = f.local_state(stored, "bug-hunt", f.local_index())
+        self.assertEqual((state, extra), ("in sync", 0))
+        self.assertTrue(where.endswith("-tmp-a"))
+
+    def test_ahead_means_this_machine_has_more(self):
+        """The same sense as in `sessions`, so one word never means two
+        things depending on which listing you are reading."""
+        self.here("-tmp-a", self.BODY + '{"uuid":"2"}\n')
+        stored = tmpfile(self.BODY, name="bug-hunt")
+        self.assertEqual(f.local_state(stored, "bug-hunt", f.local_index())[1],
+                         "ahead")
+
+    def test_behind_means_the_store_has_more(self):
+        self.here("-tmp-a")
+        stored = tmpfile(self.BODY + '{"uuid":"2"}\n', name="bug-hunt")
+        self.assertEqual(f.local_state(stored, "bug-hunt", f.local_index())[1],
+                         "behind")
+
+    def test_forked(self):
+        self.here("-tmp-a", self.BODY + '{"uuid":"2"}\n')
+        stored = tmpfile(self.BODY + '{"uuid":"3"}\n', name="bug-hunt")
+        self.assertEqual(f.local_state(stored, "bug-hunt", f.local_index())[1],
+                         "forked")
+
+    def test_two_directories_are_counted(self):
+        self.here("-tmp-a")
+        self.here("-tmp-b")
+        stored = tmpfile(self.BODY, name="bug-hunt")
+        _, state, extra = f.local_state(stored, "bug-hunt", f.local_index())
+        self.assertEqual((state, extra), ("in sync", 1))
+
+    def test_the_worst_of_several_is_the_one_shown(self):
+        """Saying "in sync" because one copy is, while another has forked,
+        would be the listing telling you not to look."""
+        self.here("-tmp-a")                                   # in sync
+        self.here("-tmp-b", self.BODY + '{"uuid":"9"}\n')     # ahead
+        stored = tmpfile(self.BODY + '{"uuid":"3"}\n', name="bug-hunt")
+        where, state, extra = f.local_state(stored, "bug-hunt", f.local_index())
+        self.assertEqual((state, extra), ("forked", 1))
+        self.assertTrue(where.endswith("-tmp-b"), where)
+
+    def test_a_name_shared_by_another_conversation(self):
+        self.here("-tmp-a")
+        stored = tmpfile('{"sessionId":"other","uuid":"9"}\n', name="bug-hunt")
+        self.assertEqual(f.local_state(stored, "bug-hunt", f.local_index())[1],
+                         f.STRANGER)
+
+    def test_an_unreadable_store_copy(self):
+        self.here("-tmp-a")
+        stored = tmpfile("\x00 binary nonsense\n", name="bug-hunt")
+        self.assertEqual(f.local_state(stored, "bug-hunt", f.local_index())[1],
+                         f.UNREADABLE)
+
+    def test_an_unnamed_local_session_is_not_indexed(self):
+        self.here("-tmp-a", '{"sessionId":"abc","uuid":"1"}\n')
+        self.assertEqual(f.local_index(), {})
+
+
 class ForkMessages(unittest.TestCase):
     """What a refusal says. It is the only output of a sync that stops, so it
     has to say enough to act on - and nothing that is untrue."""

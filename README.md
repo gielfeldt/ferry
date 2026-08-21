@@ -156,6 +156,21 @@ wrongly: `different session` when that name in the store is another
 conversation, and `unreadable` when the store is locked and its contents are
 ciphertext.
 
+`ferry list <store>` answers the same question from the other end — for each
+stored session, the directory on this machine that has it, and how that copy
+relates:
+
+```
+work:acme/bug-hunt    1.6 MB  2026-08-17  forked   ~/develop/acme
+work:acme/deploy-fix  0.5 MB  2026-08-17  —
+```
+
+The state always describes the copy on **this** machine, so "ahead" means the
+same thing in both listings. One stored session can be brought down in several
+directories — sync writes to wherever you are standing — so a `+1` after the
+directory says there are more, and the verdict shown is the one that most needs
+attention. A copy in sync is not worth saying while another has forked.
+
 It compares against your clone, not the remote — `ferry update` first if what
 you really want to know is what another machine has pushed. Comparing costs
 almost nothing in the ordinary case: two copies that are in sync are identical

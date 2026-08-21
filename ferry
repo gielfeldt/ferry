@@ -415,6 +415,22 @@ def size_delta(src, dest):
 
 SAME, AHEAD, BEHIND, FORKED = "same", "ahead", "behind", "forked"
 
+# What the listing says about a session it found in a store. STRANGER is not a
+# fork: the two are different conversations that happen to share a name, and
+# no amount of merging would reconcile them.
+STRANGER = "different session"
+
+# A store whose git-crypt is locked holds ciphertext, so nothing can be read
+# out of it and no comparison means anything. That is not the same as the two
+# copies disagreeing, and must not be reported as though it were.
+UNREADABLE = "unreadable"
+
+# Shown when no store has it. An em dash rather than a blank: "nowhere" is an
+# answer, and a gap reads as a column that failed to fill in.
+NOWHERE = "\u2014"
+
+STATES = {SAME: "in sync", AHEAD: "ahead", BEHIND: "behind", FORKED: "forked"}
+
 
 def line_set(jsonl):
     """A transcript as the set of records it holds.
@@ -1316,6 +1332,68 @@ def written_dates(log):
     return dates
 
 
+def local_index():
+    """Every named session on this machine, by the name it answers to.
+
+    The mirror of store_index: that one finds a store's copy of what is here,
+    this one finds what is here of a store's copy. A name can be held in more
+    than one directory - sync writes to wherever you are standing, so the same
+    stored session can be brought down in two places - which is why this maps
+    to a list.
+    """
+    found = {}
+    if not CLAUDE_PROJECTS.is_dir():
+        return found
+    for d in sorted(CLAUDE_PROJECTS.iterdir()):
+        if not d.is_dir():
+            continue
+        for f in sorted(d.glob("*.jsonl")):
+            name = session_name(f)
+            if name:
+                found.setdefault(name, []).append(f)
+    return found
+
+
+# Worst first. When one stored session has been brought down in several
+# directories, the listing has room for one verdict, and it must be the one
+# that most needs attention - saying "in sync" while another copy has forked
+# would be the listing telling you not to look.
+SEVERITY = [FORKED, STRANGER, UNREADABLE, BEHIND, AHEAD, SAME]
+
+
+def local_state(stored, name, index):
+    """Where a stored session sits on this machine, and how the copies relate.
+
+    Returns (where, state, extra) - the directory, the verdict, and how many
+    further copies there are beyond the one named. (None, None, 0) when this
+    machine has nothing by that name.
+    """
+    here = index.get(name or "", [])
+    if not here:
+        return None, None, 0
+    seen = []
+    for f in here:
+        if same_bytes(f, stored):
+            seen.append((f, SAME))
+        elif starts_with(stored, f):
+            seen.append((f, BEHIND))
+        elif starts_with(f, stored):
+            seen.append((f, AHEAD))
+        else:
+            sid = session_id_of(stored)
+            seen.append((f, UNREADABLE if not sid else
+                         STRANGER if sid != f.stem else
+                         relation(line_set(f), line_set(stored))))
+    seen.sort(key=lambda pair: SEVERITY.index(pair[1]))
+    worst, state = seen[0]
+    label = state if state in (STRANGER, UNREADABLE) else STATES[state]
+    # The slug names the directory outright when it can be checked; only when
+    # it cannot is the transcript read for a cwd, which on a large one costs
+    # more than everything else here put together.
+    where = from_slug(worst.parent.name) or session_cwd(worst)
+    return where or str(worst.parent), label, len(seen) - 1
+
+
 def list_one(alias, path, memory):
     repo = repo_dir(alias)
     # Fetch but never merge. Listing has to see what another machine saved, yet
@@ -1344,12 +1422,24 @@ def list_one(alias, path, memory):
         dates = written_dates(
             git(repo, "log", "--format=%x00%ad", "--date=short",
                 "--name-status", "-M", check=False).stdout) if sessions else {}
+        index = local_index()
+        rows = []
         for f in sessions:
             found = True
             disk = f.relative_to(repo).as_posix()
             rel = of_store(disk)[:-6]
-            print(f"  {alias}:{rel:<40} {f.stat().st_size/1e6:6.1f} MB  "
-                  f"{dates.get(disk, '')}")
+            where, state, extra = local_state(f, f.stem, index)
+            rows.append((f"{alias}:{rel}", f.stat().st_size,
+                         dates.get(disk, ""), where, state or "", extra))
+        refs = max((len(r[0]) for r in rows), default=0)
+        states = max((len(r[4]) for r in rows), default=0)
+        for ref, size, when, where, state, extra in rows:
+            # The state describes the copy on this machine, the same way it
+            # does in `sessions` - "ahead" is always this machine having more.
+            tail = f"{tilde(where)}{f'  +{extra}' if extra else ''}" if where \
+                else ""
+            print(f"  {ref:<{refs}} {size/1e6:6.1f} MB  {when}  "
+                  f"{state or NOWHERE:<{states}}  {tail}".rstrip())
 
     if not found:
         print(f"  {shown} has no {'memory' if memory else 'sessions'}")
@@ -1865,23 +1955,6 @@ def store_index():
             ref = f"{alias}:{p.relative_to(root).with_suffix('')}"
             found.setdefault(p.stem, []).append((ref, p))
     return found
-
-
-# What the listing says about a session it found in a store. STRANGER is not a
-# fork: the two are different conversations that happen to share a name, and
-# no amount of merging would reconcile them.
-STRANGER = "different session"
-
-# A store whose git-crypt is locked holds ciphertext, so nothing can be read
-# out of it and no comparison means anything. That is not the same as the two
-# copies disagreeing, and must not be reported as though it were.
-UNREADABLE = "unreadable"
-
-# Shown when no store has it. An em dash rather than a blank: "nowhere" is an
-# answer, and a gap reads as a column that failed to fill in.
-NOWHERE = "\u2014"
-
-STATES = {SAME: "in sync", AHEAD: "ahead", BEHIND: "behind", FORKED: "forked"}
 
 
 def same_bytes(a, b):
