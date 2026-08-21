@@ -91,10 +91,19 @@ begin with `.` or `-`.
     ferry list --memory <store>   the memory it holds
     ferry stores                  which stores are registered here
 
-To answer "is this saved?", compare `ferry sessions` here against
-`ferry list <store>` — matching by name, since a session keeps one name
-everywhere. If it is not there, say so and give the `ferry sync` command that
-would send it; do not run it.
+`ferry sessions` answers "is this saved?" on its own: every session is listed
+with the store it is in and how the two copies relate.
+
+    7c21e8b4-2a19-4d63-b0f5-9e3c6a1d4720  2026-08-17   1.2 MB  deploy-fix  ahead    work:acme/deploy-fix
+    3f9a1c2e-6b40-4c1a-9f2e-1d5a7c840b31  2026-08-17   4.0 MB  bug-hunt    in sync  work:acme/bug-hunt
+    9d4b7f10-5c82-4e97-a3d1-6f0b2e8c5493  2026-08-16   0.3 MB  log-triage  —
+
+`in sync`, `ahead` (this machine has more), `behind` (the store has more),
+`forked` (each has something the other has not), `different session` (that
+name in the store is another conversation), `unreadable` (the store is
+locked), or `—` for one no store has. Read against the local clone, so say
+`ferry update <store>` first if the question is about what another machine
+has pushed.
 
 `ferry sync <store>:<dir>/<name>` is the one command either way: it compares
 the two copies and copies whichever holds more, so the same line works on

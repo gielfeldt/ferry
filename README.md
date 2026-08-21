@@ -100,7 +100,7 @@ ferry rename work old-work                    # same store, different name
 ferry remove old-work                         # forget it; the clone stays
 ferry stores
 
-ferry sessions                                # sessions in this directory
+ferry sessions                                # here, and where each one is stored
 ferry sessions --global                       # every named session, and where
 ferry sessions --all                          # unnamed ones too, listed by id
 ferry sessions ~/develop/acme                 # another directory, same rules
@@ -138,6 +138,29 @@ instead, `sessions --global` looks everywhere, and `export` takes a ref that
 can name another directory. A directory only says *where* — the flags go on
 meaning what they mean, so `ferry sessions ~/develop/acme` lists the named
 ones there and `--all` still widens it.
+
+**`sessions` says where each one stands.** Every listed session carries the
+store it is in and how the two copies relate, so "is this safe to lose?" is
+answered by the listing rather than by remembering:
+
+```
+7c21e8b4-2a19-4d63-b0f5-9e3c6a1d4720  2026-08-17   1.2 MB  deploy-fix  ahead    work:acme/deploy-fix
+3f9a1c2e-6b40-4c1a-9f2e-1d5a7c840b31  2026-08-17   4.0 MB  bug-hunt    in sync  work:acme/bug-hunt
+9d4b7f10-5c82-4e97-a3d1-6f0b2e8c5493  2026-08-16   0.3 MB  log-triage  —
+```
+
+`in sync`, `ahead` (this machine has more), `behind` (the store has more),
+`forked` (each has something the other has not), or `—` for one no store
+holds. Two more say the question cannot be answered rather than answering it
+wrongly: `different session` when that name in the store is another
+conversation, and `unreadable` when the store is locked and its contents are
+ciphertext.
+
+It compares against your clone, not the remote — `ferry update` first if what
+you really want to know is what another machine has pushed. Comparing costs
+almost nothing in the ordinary case: two copies that are in sync are identical
+files, and one that has been worked on since still opens with every byte the
+other has, so only a genuine fork is read in full.
 
 **A session is filed under its own name**, so one conversation has one name on
 every machine. The name comes from `/rename`, `/branch` or `claude -n`, and is

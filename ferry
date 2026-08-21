@@ -12,6 +12,7 @@ import argparse
 import base64
 import contextlib
 import fcntl
+import filecmp
 import hashlib
 import json
 import os
@@ -1818,6 +1819,122 @@ def session_dirs(everything=False):
     return out
 
 
+def store_index():
+    """Every session in every registered store, by the name it is filed under.
+
+    Filenames only - nothing is opened. A session keeps one name on every
+    machine, which is what makes a name enough to find its counterpart, and
+    what makes this cost nothing to build.
+    """
+    found = {}
+    for alias, r in sorted(repos().items()):
+        root = Path(r["path"]) / SESSIONS
+        if not root.is_dir():
+            continue
+        for p in sorted(root.rglob("*.jsonl")):
+            ref = f"{alias}:{p.relative_to(root).with_suffix('')}"
+            found.setdefault(p.stem, []).append((ref, p))
+    return found
+
+
+# What the listing says about a session it found in a store. STRANGER is not a
+# fork: the two are different conversations that happen to share a name, and
+# no amount of merging would reconcile them.
+STRANGER = "different session"
+
+# A store whose git-crypt is locked holds ciphertext, so nothing can be read
+# out of it and no comparison means anything. That is not the same as the two
+# copies disagreeing, and must not be reported as though it were.
+UNREADABLE = "unreadable"
+
+# Shown when no store has it. An em dash rather than a blank: "nowhere" is an
+# answer, and a gap reads as a column that failed to fill in.
+NOWHERE = "\u2014"
+
+STATES = {SAME: "in sync", AHEAD: "ahead", BEHIND: "behind", FORKED: "forked"}
+
+
+def same_bytes(a, b):
+    """Byte-for-byte identical, which for two transcripts settles it outright.
+
+    Worth trying first: sync copies a file whole, so two copies that are in
+    sync are usually identical bytes, and reading them as bytes is far cheaper
+    than parsing every record of both. It can only ever say SAME - two copies
+    holding the same records may still differ in byte order or in repeats - so
+    a false answer here costs nothing but the slow path.
+    """
+    try:
+        return (a.stat().st_size == b.stat().st_size
+                and filecmp.cmp(str(a), str(b), shallow=False))
+    except OSError:
+        return False
+
+
+def starts_with(big, small):
+    """Whether one transcript's bytes open the other's, so its records are a
+    subset outright - which settles ahead and behind without parsing either.
+
+    Transcripts are appended to, so the copy that has been worked on since
+    usually still opens with every byte the other has. Reading raw bytes is
+    an order cheaper than parsing every record: on a 17 MB session here, 7 ms
+    against 871.
+
+    The shorter file has to end on a newline, or its last line is a fragment
+    that the longer one continues rather than repeats - and a fragment is not
+    a record either copy holds.
+    """
+    try:
+        n = small.stat().st_size
+        if n == 0 or n >= big.stat().st_size:
+            return False
+        with small.open("rb") as fs:
+            fs.seek(-1, os.SEEK_END)
+            if fs.read(1) != b"\n":
+                return False
+            fs.seek(0)
+            with big.open("rb") as fb:
+                while n > 0:
+                    chunk = min(n, 1 << 20)
+                    if fb.read(chunk) != fs.read(chunk):
+                        return False
+                    n -= chunk
+        return True
+    except OSError:
+        return False
+
+
+def store_state(jsonl, name, index):
+    """Where a local session sits in a store, and how the two copies relate.
+
+    Returns (ref, state), or (None, None) when the stores have nothing by that
+    name. Both copies are read in full, which is the only honest way to answer
+    it - and the reason is worth the cost: "is this safe to lose?" is the
+    question the listing exists to answer, and a cheaper guess would answer it
+    wrongly.
+
+    Read against your clone, not the remote. `ferry update` first if the
+    question is really about what another machine has pushed.
+    """
+    hits = index.get(name or "", [])
+    if not hits:
+        return None, None
+    ref, theirs = hits[0]
+    if len(hits) > 1:
+        ref += f" +{len(hits) - 1}"
+    if same_bytes(jsonl, theirs):
+        return ref, STATES[SAME]
+    if starts_with(jsonl, theirs):
+        return ref, STATES[AHEAD]
+    if starts_with(theirs, jsonl):
+        return ref, STATES[BEHIND]
+    sid = session_id_of(theirs)
+    if not sid:
+        return ref, UNREADABLE
+    if sid != jsonl.stem:
+        return ref, STRANGER
+    return ref, STATES[relation(line_set(jsonl), line_set(theirs))]
+
+
 def cmd_sessions(args):
     """What can be referred to here, so you know what you can sync or read.
 
@@ -1840,22 +1957,32 @@ def cmd_sessions(args):
     if args.where and not where.is_dir():
         die(f"no such directory: {args.where}")
     here = slug_dir(where)
+    index = store_index()
     rows, unnamed = [], 0
     for f in sorted(here.glob("*.jsonl")) if here.is_dir() else []:
         name = session_name(f)
+        # An unnamed session cannot be in a store - there is nothing to file it
+        # under - so nothing is read for it either.
+        ref, state = store_state(f, name, index) if name else (None, None)
         if not name:
             unnamed += 1
             if not args.all:
                 continue
             hint = ai_title(f) or first_prompt(f) or ""
             name = "* " + (hint[:71] + "\u2026" if len(hint) > 72 else hint)
-        rows.append((f.stat().st_mtime, f.stem, f.stat().st_size, name))
+        rows.append((f.stat().st_mtime, f.stem, f.stat().st_size, name,
+                     ref or "", state or ""))
 
     if not rows:
         print(f"no {'' if args.all else 'named '}sessions for {where}")
-    for mtime, sid, size, name in sorted(rows, reverse=True):
+    names = max((len(r[3]) for r in rows), default=0)
+    # The state is what you scan for, so it is the column that lines up; the
+    # ref trails, unpadded, because it is there to be copied rather than read.
+    states = max((len(r[5]) for r in rows), default=0)
+    for mtime, sid, size, name, ref, state in sorted(rows, reverse=True):
         when = datetime.fromtimestamp(mtime).strftime("%Y-%m-%d")
-        print(f"  {sid}  {when}  {size/1e6:6.1f} MB  {name}")
+        print(f"  {sid}  {when}  {size/1e6:6.1f} MB  {name:<{names}}  "
+              f"{state or NOWHERE:<{states}}  {ref}".rstrip())
 
     n = len(list((here / "memory").glob("*.md"))) if (here / "memory").is_dir() else 0
     if n:
@@ -1879,7 +2006,7 @@ def sessions_everywhere(everything=False):
     session. Unnamed ones are listed under --all by their full id, which is the
     only thing that can stand in for a name.
     """
-    rows = []
+    rows, index = [], store_index()
     if CLAUDE_PROJECTS.is_dir():
         for d in sorted(CLAUDE_PROJECTS.iterdir()):
             if not d.is_dir():
@@ -1887,6 +2014,9 @@ def sessions_everywhere(everything=False):
             where = None
             for f in sorted(d.glob("*.jsonl")):
                 name, hint = session_name(f), ""
+                # Only a named session can be in a store, so only a named one
+                # is read - which keeps --all from costing more than --global.
+                ref, state = store_state(f, name, index) if name else (None, None)
                 if not name:
                     if not everything:
                         continue
@@ -1900,16 +2030,18 @@ def sessions_everywhere(everything=False):
                 where = where or session_cwd(f)
                 if where and Path(where).is_dir():
                     rows.append((f.stat().st_mtime, name, f.stat().st_size,
-                                 where, hint))
+                                 where, hint, ref or "", state or ""))
     if not rows:
         print(f"no {'' if everything else 'named '}sessions on this machine")
         return
     width = min(max(len(r[1]) for r in rows), 36)
-    paths = min(max(len(tilde(r[3])) for r in rows), 40) if any(r[4] for r in rows) else 0
-    for mtime, name, size, where, hint in sorted(rows, reverse=True):
+    paths = min(max(len(tilde(r[3])) for r in rows), 40)
+    states = max(len(r[6]) for r in rows)
+    for mtime, name, size, where, hint, ref, state in sorted(rows, reverse=True):
         when = datetime.fromtimestamp(mtime).strftime("%Y-%m-%d")
         print(f"  {name:<{width}}  {when}  {size/1e6:6.1f} MB  "
-              f"{tilde(where):<{paths}}{hint}".rstrip())
+              f"{tilde(where):<{paths}}  {state or NOWHERE:<{states}}  "
+              f"{ref}{hint}".rstrip())
     if any(r[4] for r in rows):
         print("\n  * a title or opening line, not a name - "
               "the id is what to type")

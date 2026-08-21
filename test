@@ -48,7 +48,17 @@ def quiet():
         yield out, err
 
 
-def tmpfile(text, suffix=".jsonl"):
+def tmpfile(text, suffix=".jsonl", name=None):
+    """A throwaway file, with `name` for when the filename itself matters.
+
+    A transcript is named after its session id, and code that pairs a local
+    copy with a stored one compares the two - so those tests cannot use a
+    random name.
+    """
+    if name is not None:
+        p = Path(tempfile.mkdtemp()) / f"{name}{suffix}"
+        p.write_text(text)
+        return p
     fh = tempfile.NamedTemporaryFile("w", suffix=suffix, delete=False)
     fh.write(text)
     fh.close()
@@ -1475,6 +1485,150 @@ class Positionals(unittest.TestCase):
 
     def test_nothing_at_all_is_nothing(self):
         self.assertEqual(f.positionals([]), [])
+
+
+class FastPaths(unittest.TestCase):
+    """The short-circuits the listing uses, and the rule they must obey: never
+    a different answer from reading both copies in full.
+
+    They exist because the listing compares every session against its stored
+    copy, and parsing both took `sessions --global` from 0.35s to 3.8s. Bytes
+    settle it in almost every case: identical files are identical records, and
+    an appended-to file still opens with every byte the other has.
+    """
+
+    def pair(self, a, b):
+        return tmpfile(a), tmpfile(b)
+
+    def agrees(self, ours, theirs, expect):
+        """Whatever the fast path says, the full comparison must say too."""
+        slow = f.STATES[f.relation(f.line_set(ours), f.line_set(theirs))]
+        self.assertEqual(slow, expect)
+
+    def test_identical_files_are_the_same(self):
+        a, b = self.pair('{"uuid":"1"}\n', '{"uuid":"1"}\n')
+        self.assertTrue(f.same_bytes(a, b))
+        self.agrees(a, b, "in sync")
+
+    def test_a_different_size_is_not(self):
+        a, b = self.pair('{"uuid":"1"}\n{"uuid":"2"}\n', '{"uuid":"1"}\n')
+        self.assertFalse(f.same_bytes(a, b))
+
+    def test_the_same_size_but_different_bytes_is_not(self):
+        a, b = self.pair('{"uuid":"1"}\n', '{"uuid":"2"}\n')
+        self.assertFalse(f.same_bytes(a, b))
+
+    def test_an_appended_file_starts_with_the_other(self):
+        a, b = self.pair('{"uuid":"1"}\n{"uuid":"2"}\n', '{"uuid":"1"}\n')
+        self.assertTrue(f.starts_with(a, b))
+        self.agrees(a, b, "ahead")
+
+    def test_it_is_not_symmetric(self):
+        a, b = self.pair('{"uuid":"1"}\n{"uuid":"2"}\n', '{"uuid":"1"}\n')
+        self.assertFalse(f.starts_with(b, a))
+
+    def test_equal_files_do_not_start_with_each_other(self):
+        """Only ever a strict opening, so SAME is never reported as AHEAD."""
+        a, b = self.pair('{"uuid":"1"}\n', '{"uuid":"1"}\n')
+        self.assertFalse(f.starts_with(a, b))
+
+    def test_a_diverged_file_does_not(self):
+        a, b = self.pair('{"uuid":"1"}\n{"uuid":"2"}\n',
+                         '{"uuid":"1"}\n{"uuid":"3"}\n')
+        self.assertFalse(f.starts_with(a, b))
+        self.assertFalse(f.starts_with(b, a))
+        self.agrees(a, b, "forked")
+
+    def test_a_truncated_last_line_is_not_an_opening(self):
+        """The shorter file ends mid-record, so its last line is a fragment the
+        longer one continues rather than repeats - and a fragment is not a
+        record either copy holds. Taking it for an opening would report ahead
+        while the store held a line this copy does not."""
+        a = tmpfile('{"uuid":"1"}\n{"uuid":"22"}\n')
+        b = tmpfile('{"uuid":"1"}\n{"uuid":"2')
+        self.assertFalse(f.starts_with(a, b))
+        self.assertEqual(f.relation(f.line_set(a), f.line_set(b)), f.FORKED)
+
+    def test_an_empty_file_is_not_an_opening_either(self):
+        a, b = self.pair('{"uuid":"1"}\n', "")
+        self.assertFalse(f.starts_with(a, b))
+
+    def test_a_missing_file_is_not_an_error(self):
+        a = tmpfile('{"uuid":"1"}\n')
+        gone = Path("/nonexistent/x.jsonl")
+        self.assertFalse(f.same_bytes(a, gone))
+        self.assertFalse(f.starts_with(a, gone))
+        self.assertFalse(f.starts_with(gone, a))
+
+
+class StoreState(unittest.TestCase):
+    """What the listing says about a session it found in a store."""
+
+    def setUp(self):
+        self.root = Path(tempfile.mkdtemp())
+        (self.root / "sessions" / "acme").mkdir(parents=True)
+        self._repos = f.repos
+        f.repos = lambda: {"s": {"path": str(self.root)}}
+
+    def tearDown(self):
+        f.repos = self._repos
+
+    def stored(self, name, text):
+        p = self.root / "sessions" / "acme" / f"{name}.jsonl"
+        p.write_text(text)
+        return p
+
+    def test_a_session_no_store_has(self):
+        here = tmpfile('{"sessionId":"abc","uuid":"1"}\n')
+        self.assertEqual(f.store_state(here, "nowhere", f.store_index()),
+                         (None, None))
+
+    def test_the_ref_is_the_whole_path(self):
+        """So it can be pasted straight into a sync."""
+        body = '{"sessionId":"abc","uuid":"1"}\n'
+        self.stored("bug-hunt", body)
+        here = tmpfile(body, name="abc")
+        ref, state = f.store_state(here, "bug-hunt", f.store_index())
+        self.assertEqual(ref, "s:acme/bug-hunt")
+        self.assertEqual(state, "in sync")
+
+    def test_a_name_shared_by_two_conversations(self):
+        """Same name, different id. Not a fork - no merge would reconcile them
+        - so it must not be reported as one."""
+        self.stored("bug-hunt", '{"sessionId":"other","uuid":"9"}\n')
+        here = tmpfile('{"sessionId":"abc","uuid":"1"}\n', name="abc")
+        _, state = f.store_state(here, "bug-hunt", f.store_index())
+        self.assertEqual(state, f.STRANGER)
+
+    def test_a_store_that_cannot_be_read(self):
+        """A locked git-crypt store is ciphertext: no id comes out of it. That
+        is not the two copies disagreeing, and saying so would send you
+        looking for a conflict that is not there."""
+        self.stored("bug-hunt", "\x00\x01 binary nonsense\n")
+        here = tmpfile('{"sessionId":"abc","uuid":"1"}\n', name="abc")
+        _, state = f.store_state(here, "bug-hunt", f.store_index())
+        self.assertEqual(state, f.UNREADABLE)
+
+    def test_being_in_two_stores_is_said_out_loud(self):
+        other = Path(tempfile.mkdtemp())
+        (other / "sessions" / "team").mkdir(parents=True)
+        body = '{"sessionId":"abc","uuid":"1"}\n'
+        self.stored("bug-hunt", body)
+        (other / "sessions" / "team" / "bug-hunt.jsonl").write_text(body)
+        f.repos = lambda: {"s": {"path": str(self.root)},
+                           "t": {"path": str(other)}}
+        ref, _ = f.store_state(tmpfile(body, name="abc"), "bug-hunt",
+                               f.store_index())
+        self.assertTrue(ref.endswith("+1"), ref)
+
+    def test_an_unnamed_session_is_never_looked_up(self):
+        """It cannot be in a store - there is nothing to file it under - so it
+        must not cost a read either."""
+        index = f.store_index()
+        self.assertEqual(f.store_state(tmpfile("{}\n"), None, index),
+                         (None, None))
+        self.assertEqual(f.store_state(tmpfile("{}\n"), "", index),
+                         (None, None))
 
 
 class ForkMessages(unittest.TestCase):
