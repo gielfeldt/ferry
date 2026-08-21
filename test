@@ -2359,6 +2359,38 @@ class CommandLine(unittest.TestCase):
             f.main()
         self.assertEqual(e.exception.code, 0)
 
+    def flags_of(self, command):
+        """The long flags argparse really accepts for a command, read out of
+        its own --help rather than out of the source."""
+        with quiet() as (out, _), self.assertRaises(SystemExit):
+            sys.argv = ["ferry", command, "--help"]
+            f.main()
+        text = out.getvalue()
+        # Only this command's own options block: ferry prints the whole
+        # synopsis above it, which names every other command's flags too.
+        _, _, opts = text.rpartition("options:")
+        return set(re.findall(r"(--[a-z][a-z-]+)", opts)) - {"--help"}
+
+    def test_the_completion_table_matches_the_parser(self):
+        """Completion offers flags from its own table, so a flag added to a
+        command and not to the table is invisible, and one removed from the
+        command but left in the table is offered and then rejected."""
+        for command, listed in f.COMMANDS.items():
+            with self.subTest(command=command):
+                self.assertEqual(set(listed), self.flags_of(command))
+
+    def test_every_flag_in_the_examples_is_real(self):
+        """The examples are the first thing anyone tries."""
+        for line in f.EXAMPLES.splitlines():
+            m = re.match(r"\s+ferry ([a-z]+)((?: \S+)*)", line)
+            if not m:
+                continue
+            command, rest = m.group(1), m.group(2)
+            with self.subTest(line=line.strip()):
+                self.assertIn(command, f.COMMANDS)
+                for flag in re.findall(r"(--[a-z][a-z-]+)", rest):
+                    self.assertIn(flag, f.COMMANDS[command])
+
     def test_every_command_in_the_usage_block_is_real(self):
         """The synopsis is documentation; it should not drift from the parser."""
         commands = {line.split()[1] for line in f.USAGE.splitlines()

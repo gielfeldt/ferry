@@ -76,7 +76,7 @@ Then, in the directory you were working in:
 
 ```sh
 ferry sessions
-#   3f9a1c2e-…  2026-08-16   1.2 MB  bug-hunt
+#   3f9a1c2e-6b40-4c1a-9f2e-1d5a7c840b31  2026-08-16   1.2 MB  bug-hunt  —
 ferry sync work:acme/bug-hunt
 ```
 
@@ -136,8 +136,9 @@ ferry: work:acme/bug-hunt has changed in both places.
 ```
 
 Nothing is lost and nothing is written — both copies are still exactly as they
-were. Joining them back together is not something ferry does yet; for now,
-`ferry export` each one and decide which to keep working from.
+were. There is no flag to override it: joining them back together is not
+something ferry does yet, and a forked session stays where it is until it does.
+For now, `ferry export` each one and decide which to keep working from.
 
 ## Share a directory's memory
 
@@ -225,8 +226,8 @@ To find one when you have forgotten where it was:
 
 ```sh
 ferry sessions --global
-#   bug-hunt      2026-08-17   1.2 MB  ~/develop/acme
-#   deploy-fix    2026-08-16   4.0 MB  ~/work/ops
+#   bug-hunt    2026-08-17   1.2 MB  ~/develop/acme  in sync  work:acme/bug-hunt
+#   deploy-fix  2026-08-16   4.0 MB  ~/work/ops      ahead    work:ops/deploy-fix
 ```
 
 Every path it prints is one `export` can resolve — a session that changed
@@ -275,7 +276,7 @@ The listing shows Claude's own title beside the id, marked `*`, which is often
 enough to know what you are looking at:
 
 ```
-1b94d02f-8c81-4740-adc2-3da7052d0a4a  2026-08-15  3.3 MB  ~/develop/acme  * Vurdér readiness for PR #3 merge
+1b94d02f-8c81-4740-adc2-3da7052d0a4a  2026-08-15  3.3 MB  ~/develop/acme  —  * readiness for PR #3 merge
 ```
 
 Then name it, without opening it:
@@ -458,20 +459,22 @@ not, so neither can be written without dropping it. Nothing was touched. See
 store by another conversation. The two ids are printed; `ferry name <id>
 <another-name>` frees the name on this machine.
 
-**"has no name, and the name is what it would be filed under"** — the session
-was never named. `/rename` it, then sync. `ferry sessions` does not list it, so
-that the list only holds things you can act on; it says how many are hiding, and
-`ferry sessions --all` shows them with Claude's own title marked `*` — a title
-is not a name.
+**"nothing called X here, and nothing at store:dir/X"** — neither end has it.
+Usually the session was never named: a name is what it would be filed under, so
+an unnamed one cannot be referred to at all. `ferry sessions` does not list it
+either, so that the list only holds things you can act on — it says how many
+are hiding, and `ferry sessions --all` shows them with Claude's own title
+marked `*`. A title is not a name; `/rename` it or `ferry name <id> <name>`,
+then sync.
 
 **"this clone has diverged from its remote"** — that is git, not the session:
 two machines pushed to the store. `ferry update <store>` explains how to sort
 it out. Nothing is compared until the pull succeeds, so a stale clone never
 reports a fork it does not have.
 
-**"has no git-crypt, so this would be committed in the clear"** — the store is
-not encrypted, or your clone is locked. `ferry add <name> --path <dir> --key
-<file>` to unlock it.
+**"has no git-crypt, so transcripts would be committed in the clear"** — the
+store is not encrypted, or your clone is locked. `ferry add <name> --path <dir>
+--key <file>` to unlock it.
 
 ## When update says DIVERGED
 

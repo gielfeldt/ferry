@@ -330,8 +330,10 @@ your clone has diverged.
 ## Limitations
 
 - **No merging.** `sync` copies whole, in whichever direction loses nothing.
-  When both copies have moved it stops and says so; joining them back up is
-  yours to do, for now.
+  When both copies have moved it stops and says so, and there is no flag to
+  make it choose — a forked session cannot be moved through ferry at all until
+  merging exists. Both copies keep everything they had; `ferry export` reads
+  either one.
 - **Memory is replaced wholesale**, so a note is compared by its name and its
   contents together. A note edited on both machines is a fork, and stops the
   sync rather than being merged.
