@@ -1256,7 +1256,7 @@ class StoreRefs(unittest.TestCase):
 
     def test_inside_a_folder_offers_its_sessions(self):
         self.assertEqual(f.store_refs("s:acme/", "session"),
-                         ["s:acme/user-import", "s:acme/review-notes"])
+                         ["s:acme/review-notes", "s:acme/user-import"])
 
     def test_a_folder_keeps_its_slash_so_the_next_tab_goes_deeper(self):
         self.assertEqual(f.store_refs("s:personal/", "session"),
