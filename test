@@ -952,7 +952,7 @@ class BashCompletion(unittest.TestCase):
         r = subprocess.run(
             [bash, "--norc", "-c",
              f'. "{self.SCRIPT}"; COMP_LINE={shlex.quote(line)}; '
-             f'COMP_POINT=${{#COMP_LINE}}; _ferry; '
+             f'COMP_POINT=${{#COMP_LINE}}; _ferry ferry "" ""; '
              f'printf "%s\\n" "${{#COMPREPLY[@]}}"; '
              f'printf "%s\\n" "${{COMPREPLY[@]}}"'],
             capture_output=True, text=True, env=env)
@@ -1039,10 +1039,27 @@ class BashCompletion(unittest.TestCase):
             [(self.bashes() or ["bash"])[0], "--norc", "-c",
              f'. "{self.SCRIPT}"; COMP_LINE="{d}/mine sync "; '
              f'COMP_POINT=${{#COMP_LINE}}; COMP_WORDS=("{d}/mine" sync ""); '
-             f'_ferry; printf "%s\\n" "${{COMPREPLY[@]}}"'],
+             f'_ferry "{d}/mine" "" sync; printf "%s\\n" "${{COMPREPLY[@]}}"'],
             capture_output=True, text=True, env=env)
         self.assertIn("FROM-TYPED", r.stdout)
         self.assertNotIn("FROM-PATH", r.stdout)
+
+    def test_a_name_that_cannot_run_falls_back(self):
+        """An alias or a function cannot be run from a variable - expansion
+        happens after alias expansion - so asking it would offer nothing at
+        all, which is worse than asking the installed one."""
+        d = Path(tempfile.mkdtemp())
+        p = d / "ferry"
+        p.write_text("#!/bin/sh\nprintf 'FELL-BACK\\n'\n")
+        p.chmod(0o755)
+        env = dict(os.environ, PATH=f"{d}:{os.environ['PATH']}")
+        r = subprocess.run(
+            [(self.bashes() or ["bash"])[0], "--norc", "-c",
+             f'. "{self.SCRIPT}"; COMP_LINE="f sync "; '
+             f'COMP_POINT=${{#COMP_LINE}}; COMP_WORDS=(f sync ""); '
+             f'_ferry f "" sync; printf "%s\\n" "${{COMPREPLY[@]}}"'],
+            capture_output=True, text=True, env=env)
+        self.assertIn("FELL-BACK", r.stdout)
 
     def test_no_candidates_is_not_an_error(self):
         n, _ = self.complete("ferry sync store:zz", [])

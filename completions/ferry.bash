@@ -3,11 +3,20 @@
 _ferry() {
     local IFS=$'\n' line token head raw status i real self
     line="${COMP_LINE:0:$COMP_POINT}"
-    # Ask the ferry being typed, not whichever one is on PATH. `./ferry` in a
-    # checkout has to answer for itself, or completion describes the installed
-    # release while you are running the working copy - which is wrong in
-    # exactly the situation where you are changing what the answers are.
-    self=${COMP_WORDS[0]:-ferry}
+    # Ask the ferry being completed - bash passes it as $1 - so `./ferry` in a
+    # checkout answers for itself rather than the release describing it. This
+    # is how a completion that asks the program itself is usually written; gh,
+    # jj, pip and delta all run "$1" the same way.
+    #
+    # An alias or a shell function cannot be run from a variable: expansion
+    # happens after alias expansion, so `f` would simply fail to execute and
+    # offer nothing. Anything that will not run falls back to the name on the
+    # PATH, which is what an alias almost always points at anyway.
+    self=${1:-ferry}
+    case $self in
+        */*) [ -x "$self" ] || self=ferry ;;
+        *) [ -n "$(type -P -- "$self" 2>/dev/null)" ] || self=ferry ;;
+    esac
     # Parse the raw line in ferry, not here: bash breaks words on ':' (it is in
     # COMP_WORDBREAKS), which would split "store:personal" into three words.
     raw=$("$self" complete --line "$line" 2>/dev/null)

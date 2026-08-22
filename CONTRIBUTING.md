@@ -20,13 +20,21 @@ it installs the last tagged version and knows nothing about your working tree -
 which is what you want for a real install and never what you want for testing a
 change.
 
-The completion scripts ask whichever ferry you typed - `./ferry <TAB>` in a
-checkout answers from the checkout, `ferry <TAB>` from whatever is installed -
-so you can compare the two side by side, and completion never describes the
-release while you are running your own copy. Both spellings are registered.
+The completion scripts ask whichever ferry is being completed - bash passes it
+as `$1` - so `./ferry <TAB>` in a checkout answers from the checkout while
+`ferry <TAB>` answers from whatever is installed. That is how a completion
+which asks the program itself is normally written; `gh`, `jj`, `pip` and
+`delta` all run `"$1"` the same way.
 
-They only ever shell out to `<the ferry you typed> complete`, so the link above
-covers them; copy them only when you have changed the scripts themselves:
+An alias cannot be run from a variable, because expansion happens after alias
+expansion - so anything that will not run falls back to `ferry` on the PATH,
+which is what an alias almost always points at. `./ferry` is registered as well
+as `ferry`, which is *not* a common thing to do - none of the 1375 completions
+shipped by bash-completion here register a `./` form - but running a checkout
+by path is the normal case when working on ferry itself.
+
+They only ever shell out to `<that ferry> complete`, so the link above covers
+them; copy them only when you have changed the scripts themselves:
 
 ```sh
 cp completions/ferry.bash ~/.local/share/bash-completion/completions/ferry

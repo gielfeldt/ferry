@@ -7,10 +7,17 @@ _ferry() {
     local raw rc
     # not `status`: zsh keeps that read-only as a synonym for $?, and assigning
     # to it aborts the function before it ever reaches a candidate.
-    # The ferry being typed, not whichever is on PATH: `./ferry` in a checkout
-    # must answer for itself, or completion describes the installed release
-    # while you are running the working copy.
-    raw=$(${words[1]:-ferry} complete --line "$BUFFER" 2>/dev/null)
+    # The ferry being completed, so `./ferry` in a checkout answers for itself
+    # rather than the release describing it. An alias cannot be run from a
+    # variable - expansion happens after alias expansion - so anything that
+    # will not run falls back to the name on the PATH.
+    local self=${words[1]:-ferry}
+    if [[ $self == */* ]]; then
+        [[ -x $self ]] || self=ferry
+    else
+        (( $+commands[$self] )) || self=ferry
+    fi
+    raw=$($self complete --line "$BUFFER" 2>/dev/null)
     rc=$?
     # 1: nothing belongs in this position. 2: a path does. Anything else is a
     # list of candidates, which may legitimately be empty.
