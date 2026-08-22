@@ -1,11 +1,16 @@
 # ferry completion for bash
 #   installed to ~/.local/share/bash-completion/completions/ferry
 _ferry() {
-    local IFS=$'\n' line token head raw status i real
+    local IFS=$'\n' line token head raw status i real self
     line="${COMP_LINE:0:$COMP_POINT}"
+    # Ask the ferry being typed, not whichever one is on PATH. `./ferry` in a
+    # checkout has to answer for itself, or completion describes the installed
+    # release while you are running the working copy - which is wrong in
+    # exactly the situation where you are changing what the answers are.
+    self=${COMP_WORDS[0]:-ferry}
     # Parse the raw line in ferry, not here: bash breaks words on ':' (it is in
     # COMP_WORDBREAKS), which would split "store:personal" into three words.
-    raw=$(ferry complete --line "$line" 2>/dev/null)
+    raw=$("$self" complete --line "$line" 2>/dev/null)
     status=$?
     token=${line##* }
     COMPREPLY=()
@@ -58,5 +63,7 @@ _ferry_finish() {
 # rejects the whole command rather than the one option - which would leave
 # ferry with no completion at all. Sorted is a fine second best; the candidates
 # come back sorted anyway.
-complete -o nosort -o nospace -F _ferry ferry 2>/dev/null ||
-    complete -o nospace -F _ferry ferry
+# ./ferry as well as ferry: a checkout is run by path, and bash matches the
+# word as typed rather than what it resolves to.
+complete -o nosort -o nospace -F _ferry ferry ./ferry 2>/dev/null ||
+    complete -o nospace -F _ferry ferry ./ferry

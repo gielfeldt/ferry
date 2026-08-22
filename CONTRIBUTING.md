@@ -20,8 +20,13 @@ it installs the last tagged version and knows nothing about your working tree -
 which is what you want for a real install and never what you want for testing a
 change.
 
-The completion scripts only ever shell out to `ferry complete`, so the link
-covers them too; copy them only when you have changed the scripts themselves:
+The completion scripts ask whichever ferry you typed - `./ferry <TAB>` in a
+checkout answers from the checkout, `ferry <TAB>` from whatever is installed -
+so you can compare the two side by side, and completion never describes the
+release while you are running your own copy. Both spellings are registered.
+
+They only ever shell out to `<the ferry you typed> complete`, so the link above
+covers them; copy them only when you have changed the scripts themselves:
 
 ```sh
 cp completions/ferry.bash ~/.local/share/bash-completion/completions/ferry

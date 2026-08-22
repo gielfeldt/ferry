@@ -1011,6 +1011,39 @@ class BashCompletion(unittest.TestCase):
         _, got = self.complete("ferry syn", ["sync"])
         self.assertEqual(got, ["sync "])
 
+    def test_it_is_bound_to_a_checkout_run_by_path_too(self):
+        """`./ferry` is how you run a checkout, and bash matches the word as
+        typed - so registering only `ferry` leaves a checkout with no
+        completion at all."""
+        for b in self.bashes() or [None]:
+            with self.subTest(bash=b):
+                r = subprocess.run(
+                    [b or "bash", "--norc", "-c",
+                     f'. "{self.SCRIPT}"; complete -p ./ferry'],
+                    capture_output=True, text=True)
+                self.assertEqual(r.returncode, 0, r.stderr)
+                self.assertIn("_ferry", r.stdout)
+
+    def test_it_asks_the_ferry_that_was_typed(self):
+        """Not whichever is on PATH: a checkout answers for itself, or
+        completion describes the installed release while you run the working
+        copy."""
+        d = Path(tempfile.mkdtemp())
+        # two "ferry"s, saying different things, to tell which one was asked
+        for name, said in (("ferry", "FROM-PATH"), ("mine", "FROM-TYPED")):
+            p = d / name
+            p.write_text(f"#!/bin/sh\nprintf '%s\\n' {said}\n")
+            p.chmod(0o755)
+        env = dict(os.environ, PATH=f"{d}:{os.environ['PATH']}")
+        r = subprocess.run(
+            [(self.bashes() or ["bash"])[0], "--norc", "-c",
+             f'. "{self.SCRIPT}"; COMP_LINE="{d}/mine sync "; '
+             f'COMP_POINT=${{#COMP_LINE}}; COMP_WORDS=("{d}/mine" sync ""); '
+             f'_ferry; printf "%s\\n" "${{COMPREPLY[@]}}"'],
+            capture_output=True, text=True, env=env)
+        self.assertIn("FROM-TYPED", r.stdout)
+        self.assertNotIn("FROM-PATH", r.stdout)
+
     def test_no_candidates_is_not_an_error(self):
         n, _ = self.complete("ferry sync store:zz", [])
         self.assertEqual(n, 0)
@@ -1111,9 +1144,31 @@ print -r -- "RC=$?"
                          "compinit did not bind ferry: " + r.stderr)
 
     def test_the_compdef_tag_is_the_first_line(self):
-        """Said plainly, so the reason survives an edit to the header."""
-        self.assertEqual(self.SCRIPT.read_text().splitlines()[0],
-                         "#compdef ferry")
+        """Said plainly, so the reason survives an edit to the header. What
+        the tag names may grow; where it sits may not."""
+        first = self.SCRIPT.read_text().splitlines()[0]
+        self.assertTrue(first.startswith("#compdef "), first)
+        self.assertIn("ferry", first.split())
+
+    def test_it_is_bound_to_a_checkout_run_by_path_too(self):
+        """`./ferry` is how you run a checkout, and the shell matches the word
+        as typed rather than what it resolves to."""
+        z, d = self.zsh(), Path(tempfile.mkdtemp())
+        (d / "sf").mkdir()
+        shutil.copy(self.SCRIPT, d / "sf" / "_ferry")
+        r = subprocess.run(
+            [z, "-f", "-c",
+             f'fpath=({d}/sf $fpath); autoload -Uz compinit; '
+             f'compinit -u -d {d}/dump; print -r -- "${{_comps[./ferry]:-none}}"'],
+            capture_output=True, text=True)
+        self.assertEqual(r.stdout.strip(), "_ferry", r.stderr)
+
+    def test_it_asks_the_ferry_that_was_typed(self):
+        """Not whichever is on PATH. A checkout has to answer for itself, or
+        completion describes the installed release while you run the working
+        copy - wrong in exactly the case where you are changing the answers."""
+        self.assertNotIn("$(ferry complete", self.SCRIPT.read_text())
+        self.assertIn("words[1]", self.SCRIPT.read_text())
 
     def test_a_folder_is_offered_without_a_space(self):
         """So the next TAB can carry on into it."""
