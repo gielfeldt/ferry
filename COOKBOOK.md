@@ -102,16 +102,16 @@ and it is the same one everywhere:
 
 ```sh
 # laptop A, finishing up
-ferry sync work:acme/bug-hunt          # sent
+ferry sync bug-hunt                    # sent
 
 # laptop B, starting
-ferry sync work:acme/bug-hunt          # received
+ferry sync work:acme/bug-hunt          # the first time here, so the whole path
 claude --resume bug-hunt
 # … work …
-ferry sync work:acme/bug-hunt          # sent
+ferry sync bug-hunt                    # sent
 
 # laptop A, next morning
-ferry sync work:acme/bug-hunt          # received
+ferry sync bug-hunt                    # received
 ```
 
 You never say which way. ferry compares the two copies and sends whichever

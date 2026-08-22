@@ -81,7 +81,7 @@ ferry remove <store> [--force]
 ferry sessions [<dir>] [--global] [--all]
 ferry name <session>|<dir>:<session> <name>
 ferry memory [<dir>] [--global]
-ferry sync <store>:<path>
+ferry sync <session>|<store>:<path>
 ferry sync --memory <store>:<dir>
 ferry move <store>:<path> <store>:<dir> [--force]
 ferry move --memory <store>:<dir> <store>:<dir> [--force]
@@ -109,7 +109,8 @@ ferry memory                                  # notes in this directory
 ferry memory ~/develop/acme                   # notes in another
 ferry memory --global                         # every directory that remembers
 
-ferry sync work:acme/bug-hunt                 # a session, either direction
+ferry sync bug-hunt                           # once the store has it
+ferry sync work:acme/bug-hunt                 # the first time, to say where
 ferry sync --memory work:acme                 # that folder's notes
 
 ferry list work                               # its sessions
@@ -192,8 +193,19 @@ Claude Code would have written — which matters for an old conversation you wan
 to file but not reopen. Local sessions only: in a store the file *is* named
 after the session, so naming one there would leave the two disagreeing.
 
-**`sync` works out its own direction.** You give it one ref — the whole path in
-the store — and it compares what each copy holds. Whichever holds everything the
+**`sync` works out its own direction.** You give it one thing to sync and it
+compares what each copy holds.
+
+Once a store has a session, its **name** is enough — the store files it under
+that name, and a session keeps one name on every machine, so ferry can find
+where it went. The whole path is only needed the first time, to say which
+folder it should go to:
+
+```sh
+ferry sync work:acme/bug-hunt     # the first time
+ferry sync bug-hunt               # every time after
+```
+ Whichever holds everything the
 other holds, and more, is the one that gets copied. A copy is never replaced by
 one holding less, so there is no direction to get wrong and no flag to get
 wrong either.

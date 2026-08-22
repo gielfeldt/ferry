@@ -1182,6 +1182,31 @@ def merge_into(ours, theirs):
     return gained
 
 
+def ref_for_name(name):
+    """The store ref a bare session name stands for.
+
+    Once a session has been synced its name is enough to say where it lives:
+    the store files it under that name, and a session keeps one name on every
+    machine. So `ferry sync bug-hunt` means what `ferry sync work:acme/bug-hunt`
+    means, without having to remember which folder it went to.
+
+    A name that no store holds cannot be resolved, because nothing here knows
+    which folder it should go to - that is the one time the whole ref has to be
+    typed, and it is the time you are deciding something rather than repeating
+    it.
+    """
+    hits = store_index().get(name, [])
+    if len(hits) == 1:
+        return hits[0][0]
+    if not hits:
+        die(f"no store holds a session called '{name}'.\n"
+            f"       say where it should go:  ferry sync <store>:<dir>/{name}\n"
+            f"       ferry sessions       what is here, and where it is stored")
+    die(f"'{name}' is in more than one store:\n"
+        + "".join(f"       {ref}\n" for ref, _ in hits)
+        + "       say which one")
+
+
 def cmd_sync(args):
     """Make one session, or one directory's memory, the same in both places.
 
@@ -1193,7 +1218,13 @@ def cmd_sync(args):
     When neither copy holds the other, each has something the other has not,
     no copy can be made without dropping it, and this stops.
     """
-    alias, path = split_ref(args.target, directory=args.memory)
+    # A bare name is a session already in a store, which knows its own folder.
+    # Memory has no name of its own - it belongs to the directory - so there is
+    # nothing there for a bare word to mean.
+    target = args.target
+    if ":" not in target and not args.memory:
+        target = ref_for_name(target)
+    alias, path = split_ref(target, directory=args.memory)
     repo, here = repo_dir(alias), slug_dir()
     # Before anything is compared: comparing against a stale store is how a
     # sync reports a fork that only git was behind on.
@@ -1605,12 +1636,11 @@ def dir_refs(everything=False):
 
 
 def synced_refs(prefix, where=None):
-    """Store refs for the sessions in this directory that a store already has.
+    """The sessions in this directory that a store already has, by name.
 
     The one you mean to sync is nearly always one you are standing in, and its
-    ref sits three levels down the store - so reaching it a TAB at a time is a
-    lot of walking to arrive somewhere ferry could have named outright. These
-    are offered whole, beside the stores themselves.
+    name is all sync needs once the store has it - so the name is what is
+    offered, not the ref three levels down the store that it stands for.
 
     Matched on the name alone, which is what makes it cheap enough for a TAB:
     no stored transcript is opened. A name that turns out to belong to another
@@ -1623,9 +1653,8 @@ def synced_refs(prefix, where=None):
     out = []
     for f in sorted(here.glob("*.jsonl")) if here.is_dir() else []:
         name = session_name(f)
-        for ref, _ in index.get(name or "", []):
-            if ref.startswith(prefix):
-                out.append(ref)
+        if name and name in index and name.startswith(prefix):
+            out.append(name)
     return sorted(set(out))
 
 
@@ -2265,7 +2294,7 @@ USAGE = """\
   ferry sessions [<dir>] [--global] [--all]
   ferry name <session>|<dir>:<session> <name>
   ferry memory [<dir>] [--global]
-  ferry sync <store>:<path>
+  ferry sync <session>|<store>:<path>
   ferry sync --memory <store>:<dir>
   ferry move <store>:<path> <store>:<dir> [--force]
   ferry move --memory <store>:<dir> <store>:<dir> [--force]
@@ -2296,7 +2325,8 @@ examples:
     ferry memory --global                         everywhere that remembers
 
   move it between machines
-    ferry sync work:acme/bug-hunt                 whichever way it needs to go
+    ferry sync bug-hunt                           once the store has it
+    ferry sync work:acme/bug-hunt                 the first time, to say where
     ferry sync --memory work:acme                 that folder's notes
     ferry list work                               what the store holds
     ferry list --memory work                      its memory
@@ -2314,11 +2344,15 @@ examples:
     ferry move --memory work:acme work:acme-v2    -> acme-v2/memory
     ferry move work:acme/bug-hunt work:archive    -> archive/bug-hunt.jsonl
 
-sync takes the whole path and works out the direction itself: whichever copy
-holds everything the other holds, and more, is the one that gets copied. A copy
-is never replaced by one holding less, so there is no direction to get wrong.
-When each holds something the other does not, sync says so and stops rather
-than choosing for you.
+sync works out the direction itself: whichever copy holds everything the other
+holds, and more, is the one that gets copied, and a copy is never replaced by
+one holding less - so there is no direction to get wrong. When each holds
+something the other does not, both are kept: every record either had, checked
+to hold both before anything is replaced.
+
+Once a store has a session its name is enough, because the store files it under
+that name and a session keeps one name everywhere. The whole path is only
+needed the first time, to say which folder it should go to.
 
 --memory is how you say which of the two you mean, everywhere. A store keeps
 them in separate trees, so a session may be called `memory` like anything else.\
@@ -2375,7 +2409,7 @@ def main():
     p.set_defaults(func=cmd_memory)
 
     p = sub.add_parser("sync", help="make a session the same in both places")
-    p.add_argument("target", metavar="<store>:<path>")
+    p.add_argument("target", metavar="<session>|<store>:<path>")
     p.add_argument("-m", "--memory", action="store_true",
                    help="this directory's memory, not a session")
     p.add_argument("--allow-plaintext", action="store_true",

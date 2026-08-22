@@ -1632,11 +1632,85 @@ class StoreState(unittest.TestCase):
                          (None, None))
 
 
+class RefForName(unittest.TestCase):
+    """A bare session name standing for the store ref it is already at.
+
+    Once a session has been synced, the store files it under its name and a
+    session keeps one name everywhere - so the name is enough, and `ferry sync
+    bug-hunt` means what the whole ref means without having to remember which
+    folder it went to.
+    """
+
+    def setUp(self):
+        self.root = Path(tempfile.mkdtemp())
+        self._repos = f.repos
+        f.repos = lambda: {"s": {"path": str(self.root)}}
+
+    def tearDown(self):
+        f.repos = self._repos
+
+    def stored(self, alias_path):
+        p = self.root / "sessions" / f"{alias_path}.jsonl"
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text('{"sessionId":"x","uuid":"1"}\n')
+
+    def test_one_store_entry_resolves(self):
+        self.stored("acme/bug-hunt")
+        self.assertEqual(f.ref_for_name("bug-hunt"), "s:acme/bug-hunt")
+
+    def test_the_folder_does_not_have_to_be_remembered(self):
+        """That is the whole point - the name is what you know."""
+        self.stored("deep/nested/folder/bug-hunt")
+        self.assertEqual(f.ref_for_name("bug-hunt"),
+                         "s:deep/nested/folder/bug-hunt")
+
+    def test_a_session_at_the_top_of_a_store(self):
+        self.stored("bug-hunt")
+        self.assertEqual(f.ref_for_name("bug-hunt"), "s:bug-hunt")
+
+    def test_a_name_no_store_holds_says_where_to_say_it(self):
+        """Nothing here knows which folder it should go to, and that is the
+        one time the whole ref has to be typed - the time you are deciding
+        something rather than repeating it."""
+        with quiet() as (_, err), self.assertRaises(SystemExit):
+            f.ref_for_name("never-synced")
+        self.assertIn("no store holds", err.getvalue())
+        self.assertIn("<store>:<dir>/never-synced", err.getvalue())
+
+    def test_a_name_in_two_stores_lists_them(self):
+        other = Path(tempfile.mkdtemp())
+        (other / "sessions" / "team").mkdir(parents=True)
+        (other / "sessions" / "team" / "bug-hunt.jsonl").write_text("{}\n")
+        self.stored("acme/bug-hunt")
+        f.repos = lambda: {"s": {"path": str(self.root)},
+                           "t": {"path": str(other)}}
+        with quiet() as (_, err), self.assertRaises(SystemExit):
+            f.ref_for_name("bug-hunt")
+        self.assertIn("s:acme/bug-hunt", err.getvalue())
+        self.assertIn("t:team/bug-hunt", err.getvalue())
+
+    def test_a_ref_is_left_alone(self):
+        """Only a bare word is resolved; anything with a colon already says
+        where it is."""
+        self.stored("acme/bug-hunt")
+        sys.argv = ["ferry", "sync", "s:acme/bug-hunt"]
+        called = []
+        real = f.repo_dir
+        f.repo_dir = lambda a: called.append(a) or Path("/nonexistent")
+        try:
+            with quiet(), self.assertRaises(SystemExit):
+                f.main()
+        finally:
+            f.repo_dir = real
+        self.assertEqual(called, ["s"])
+
+
 class SyncedRefs(unittest.TestCase):
     """What `ferry sync <TAB>` offers before you have typed a store.
 
-    Walking the store from the top to reach a session you are standing in is
-    the whole width of the store for something ferry already knows the ref of.
+    The name, not the ref it stands for: once the store has a session, its name
+    is the whole of what sync needs, and walking the store to reach a session
+    you are standing in is a lot of typing for something already known.
     """
 
     def setUp(self):
@@ -1660,10 +1734,10 @@ class SyncedRefs(unittest.TestCase):
         d.mkdir(parents=True, exist_ok=True)
         (d / f"{name}.jsonl").write_text('{"sessionId":"x","uuid":"1"}\n')
 
-    def test_a_local_session_the_store_has_is_named_whole(self):
+    def test_a_local_session_the_store_has_is_offered_by_name(self):
         self.local("abc", "bug-hunt")
         self.stored("acme", "bug-hunt")
-        self.assertEqual(f.synced_refs(""), ["s:acme/bug-hunt"])
+        self.assertEqual(f.synced_refs(""), ["bug-hunt"])
 
     def test_one_no_store_has_is_not_offered(self):
         """There is no ref to complete yet - that is what typing one is for."""
@@ -1678,15 +1752,15 @@ class SyncedRefs(unittest.TestCase):
     def test_it_narrows_as_you_type(self):
         self.local("abc", "bug-hunt")
         self.stored("acme", "bug-hunt")
-        self.assertEqual(f.synced_refs("s:acme/b"), ["s:acme/bug-hunt"])
-        self.assertEqual(f.synced_refs("s:other"), [])
+        self.assertEqual(f.synced_refs("bug"), ["bug-hunt"])
+        self.assertEqual(f.synced_refs("deploy"), [])
 
     def test_nothing_registered_is_not_an_error(self):
         f.repos = lambda: {}
         self.local("abc", "bug-hunt")
         self.assertEqual(f.synced_refs(""), [])
 
-    def test_the_offered_refs_come_first(self):
+    def test_the_names_come_first(self):
         """The stores are still walkable, but the likely answer leads."""
         self.local("abc", "bug-hunt")
         self.stored("acme", "bug-hunt")
@@ -1694,18 +1768,19 @@ class SyncedRefs(unittest.TestCase):
         with quiet() as (out, _):
             f.main()
         got = out.getvalue().split()
-        self.assertEqual(got[0], "s:acme/bug-hunt")
+        self.assertEqual(got[0], "bug-hunt")
         self.assertIn("s:", got)
 
-    def test_a_ref_is_offered_once(self):
-        """It is both a store ref and a local one; it must not be listed
-        twice."""
+    def test_a_name_and_its_ref_do_not_collide(self):
+        """The bare name and the ref it stands for are different words, so
+        both can be offered without either being listed twice."""
         self.local("abc", "bug-hunt")
         self.stored("acme", "bug-hunt")
-        got = f.store_refs("s:acme/", "session")
-        mine = f.synced_refs("s:acme/")
-        merged = mine + [r for r in got if r not in set(mine)]
-        self.assertEqual(merged.count("s:acme/bug-hunt"), 1)
+        mine = f.synced_refs("")
+        merged = mine + [r for r in f.store_refs("", "session")
+                         if r not in set(mine)]
+        self.assertEqual(merged.count("bug-hunt"), 1)
+        self.assertEqual(sorted(merged), ["bug-hunt", "s:"])
 
 
 class LocalState(unittest.TestCase):
