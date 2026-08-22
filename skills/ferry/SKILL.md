@@ -108,6 +108,7 @@ has pushed.
 `ferry sync <store>:<dir>/<name>` is the one command either way: it compares
 the two copies and copies whichever holds more, so the same line works on
 either machine. When both have changed it joins them, keeping every record
-either had. Once a store has the session, `ferry sync <name>` is enough — the
+either had; memory joins too, stopping only for a note that says different
+things in each place. Once a store has the session, `ferry sync <name>` is enough — the
 listing's ref column shows what a name resolves to. Never run it to "just
 check": it writes and pushes whenever this machine is not the one behind.

@@ -1047,11 +1047,24 @@ def sync_receive(alias, path, src, dest):
           f"{session_name(dest) or dest.stem}")
 
 
+INDEX = "MEMORY.md"
+
+
 def note_set(where):
-    """A memory directory as the set of notes it holds, by name and content."""
+    """A memory directory as the notes it holds, by name and content.
+
+    The index is left out. MEMORY.md is a list of the notes rather than a note,
+    so it is derivable from the rest and cannot be evidence of anything: two
+    copies whose notes agree are in sync whatever their indexes say, and a join
+    rebuilds the index rather than keeping either. Counting it here would make
+    every difference in the notes look like a difference on both sides, because
+    the index differs whenever the notes do.
+    """
     out = set()
     if where.is_dir():
         for f in where.rglob("*.md"):
+            if f.name == INDEX:
+                continue
             out.add((str(f.relative_to(where)),
                      hashlib.sha1(f.read_bytes()).hexdigest()))
     return out
@@ -1087,6 +1100,85 @@ def memory_fork_message(what, ours, theirs):
     return "\n".join(lines)
 
 
+def index_entries(mem):
+    """The memory index as one line per note, keyed by the note it links to.
+
+    MEMORY.md is not prose - it is a list, written one line to a note:
+
+        - [Fix the design](fix-the-design.md) - guards are evidence …
+
+    So two copies of it join the way a list joins, by the file each line points
+    at, and the answer is derivable from the notes rather than guessed at. That
+    is what makes memory joinable at all: the index is the part that always
+    differs when two machines have written notes, and it is the part that never
+    needed a judgement.
+
+    A line that names no note is kept as it stands, under itself, so a heading
+    or a note-to-self in the index survives.
+    """
+    out = {}
+    f = mem / INDEX
+    if not f.is_file():
+        return out
+    for line in f.read_text(errors="replace").splitlines():
+        found = re.search(r"\]\(([^)]+\.md)\)", line)
+        out[found.group(1) if found else line] = line
+    return out
+
+
+def notes_of(mem):
+    """The notes in a memory directory, by path within it.
+
+    Nested as well as top-level, and keyed by the relative path, because that
+    is what note_set counts - a note in a subdirectory that the comparison sees
+    and the join does not would be a note quietly dropped.
+
+    The index is not one of them: it describes notes rather than being one.
+    """
+    if not mem.is_dir():
+        return {}
+    return {str(p.relative_to(mem)): p
+            for p in sorted(mem.rglob("*.md")) if p.name != INDEX}
+
+
+def merge_memory(ours, theirs, dest):
+    """Join two memory directories into dest, which must not exist yet.
+
+    A note is a file with a name, so notes join the way files join: whatever is
+    only here, whatever is only there, and one copy of whatever is on both. The
+    index is rebuilt from both indexes, this copy's line winning where both
+    describe the same note - it is a description of a note that is being kept
+    either way, so neither line can be wrong about anything that matters.
+
+    Only a note that exists on both sides with different contents cannot be
+    joined, and that is settled before this is called.
+    """
+    dest.mkdir(parents=True)
+    mine, yours = notes_of(ours), notes_of(theirs)
+    for name in sorted(set(mine) | set(yours)):
+        src = mine.get(name) or yours[name]
+        (dest / name).parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(src, dest / name)
+    entries = {**index_entries(theirs), **index_entries(ours)}
+    if entries:
+        kept = set(mine) | set(yours)
+        # A line for a note that is no longer here would send a reader after a
+        # file that is not there; a line that names no note is not about one.
+        lines = [entries[k] for k in sorted(entries)
+                 if not k.endswith(".md") or k in kept]
+        (dest / INDEX).write_text("\n".join(lines) + "\n")
+    return len(set(mine) | set(yours)), len(set(yours) - set(mine))
+
+
+def conflicting_notes(ours, theirs):
+    """Notes held by both, saying different things. The only part of a memory
+    directory that has no join: two versions of one note is prose, and picking
+    one is a guess at what was meant."""
+    mine, yours = notes_of(ours), notes_of(theirs)
+    return sorted(n for n in set(mine) & set(yours)
+                  if mine[n].read_bytes() != yours[n].read_bytes())
+
+
 def sync_memory(args, repo, alias, path, here):
     """The same four states, over a directory of notes rather than a transcript.
 
@@ -1101,18 +1193,53 @@ def sync_memory(args, repo, alias, path, here):
     state = relation(a, b)
     if state == SAME:
         print(f"memory {alias}:{path} is already in sync  ({len(a)} note(s))")
-    elif state == AHEAD:
+        return
+    if state == AHEAD:
         check_encryption(repo, alias, args.allow_plaintext)
         replace_dir(ours, theirs)
         print(f"sent memory -> {alias}:{path}  ({len(a)} note(s))")
-        commit_push(repo, f"memory: {path or 'top'}",
-                    [in_store(path, memory=True)])
-    elif state == BEHIND:
+        return commit_push(repo, f"memory: {path or 'top'}",
+                           [in_store(path, memory=True)])
+    if state == BEHIND:
         here.mkdir(parents=True, exist_ok=True)
         replace_dir(theirs, ours)
         print(f"received memory {alias}:{path}  ({len(b)} note(s))")
-    else:
-        die(memory_fork_message(f"the memory for {alias}:{path}", a, b))
+        return
+
+    # Each side holds something the other does not. A note is a file with a
+    # name, so notes join the way files join - the directory only refuses when
+    # one note exists on both sides saying different things.
+    clash = conflicting_notes(ours, theirs)
+    if clash:
+        die(f"the memory for {alias}:{path} has notes that say different "
+            f"things in each place:\n"
+            + "".join(f"       {n}\n" for n in clash)
+            + f"       a note is prose, and picking one would be a guess at "
+              f"what you meant.\n"
+              f"       ferry export --memory {alias}:{path} shows the store's; "
+              f"reconcile\n       those and sync again. Nothing was changed.")
+
+    # Not the name replace_dir gives its own scratch copy, or it clears this
+    # one out from under itself on the way to writing it.
+    joined = ours.with_name(f"{ours.name}.ferry-merge-{os.getpid()}")
+    try:
+        total, gained = merge_memory(ours, theirs, joined)
+        for other, side in ((ours, "this copy"), (theirs, "the store's copy")):
+            if relation(note_set(joined), note_set(other)) not in (SAME, AHEAD):
+                die(f"the merge would not have held every note {side} had, "
+                    f"so nothing was changed.\n"
+                    f"       this is a bug - please report it")
+        check_encryption(repo, alias, args.allow_plaintext)
+        here.mkdir(parents=True, exist_ok=True)
+        replace_dir(joined, ours)
+        replace_dir(joined, theirs)
+    finally:
+        if joined.is_dir():
+            shutil.rmtree(joined)
+    print(f"merged memory {alias}:{path}\n"
+          f"  {total} note(s), {gained} of them from the store")
+    commit_push(repo, f"memory: {path or 'top'}",
+                [in_store(path, memory=True)])
 
 
 def merge_transcripts(ours, theirs):
@@ -1372,6 +1499,11 @@ def replace_dir(src, dest):
     tag = f".ferry-{os.getpid()}"
     new, old = dest.with_name(dest.name + tag + ".new"), \
         dest.with_name(dest.name + tag + ".old")
+    # These are cleared before use, so a source named like one of them would be
+    # deleted on the way to being copied.
+    if src in (new, old):
+        die(f"cannot copy {src} onto {dest}: it is where the copy would be "
+            f"staged.\n       this is a bug - please report it")
     shutil.rmtree(new, ignore_errors=True)
     shutil.rmtree(old, ignore_errors=True)
     dest.parent.mkdir(parents=True, exist_ok=True)
@@ -2348,7 +2480,9 @@ sync works out the direction itself: whichever copy holds everything the other
 holds, and more, is the one that gets copied, and a copy is never replaced by
 one holding less - so there is no direction to get wrong. When each holds
 something the other does not, both are kept: every record either had, checked
-to hold both before anything is replaced.
+to hold both before anything is replaced. Memory joins the same way - notes are
+separate files - and stops only for a note that exists on both sides saying
+different things.
 
 Once a store has a session its name is enough, because the store files it under
 that name and a session keeps one name everywhere. The whole path is only

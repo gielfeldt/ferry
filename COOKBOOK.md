@@ -185,17 +185,31 @@ ferry sync --memory work:acme
 ```
 
 Same command, same rule as a session: whichever side holds every note the other
-holds, and more, is the one that gets copied. A note is compared by its name
-*and* its contents, so one edited in both places is a fork and stops the sync:
+holds, and more, is the one that gets copied. When each side has notes the
+other has not, they are joined — notes are separate files, so keeping both
+costs nothing:
 
 ```
-ferry: the memory for work:acme has changed in both places.
-       changed on both sides: conventions.md
-       only there: deploy.md
+merged memory work:acme
+  7 note(s), 3 of them from the store
 ```
 
-Nothing is written when it stops. `ferry export --memory work:acme` shows you
-the store's version to compare against your own.
+`MEMORY.md` is rebuilt from both indexes rather than picked between. It is a
+list of the notes, one line each, so it follows from them rather than being
+something to reconcile — which is why it differing is not a conflict.
+
+The one thing that cannot be joined is the same note saying different things in
+each place:
+
+```
+ferry: the memory for work:acme has notes that say different things in each place:
+       conventions.md
+       a note is prose, and picking one would be a guess at what you meant.
+```
+
+Nothing is written when it stops. `ferry export --memory work:acme` shows the
+store's version to compare against your own; reconcile that one note and sync
+again.
 
 ## Keep work and personal apart
 

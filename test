@@ -2101,6 +2101,108 @@ class Merge(unittest.TestCase):
         self.assertEqual(list(ours.parent.glob("*.new")), [])
 
 
+class MemoryMerge(unittest.TestCase):
+    """Joining two memory directories.
+
+    A note is a file with a name, so notes join the way files join. The index
+    is a list of the notes rather than a note, so it is rebuilt rather than
+    chosen between - which is what makes memory joinable at all, since the
+    index differs whenever the notes do.
+    """
+
+    def dirs(self, mine, theirs):
+        a, b = Path(tempfile.mkdtemp()), Path(tempfile.mkdtemp())
+        for d, files in ((a, mine), (b, theirs)):
+            for name, text in files.items():
+                (d / name).write_text(text)
+        return a, b
+
+    def test_notes_from_both_sides_are_kept(self):
+        a, b = self.dirs({"here.md": "x"}, {"there.md": "y"})
+        out = Path(tempfile.mkdtemp()) / "joined"
+        total, gained = f.merge_memory(a, b, out)
+        self.assertEqual(sorted(p.name for p in out.glob("*.md")),
+                         ["here.md", "there.md"])
+        self.assertEqual((total, gained), (2, 1))
+
+    def test_a_note_on_both_sides_is_kept_once(self):
+        a, b = self.dirs({"same.md": "x"}, {"same.md": "x"})
+        out = Path(tempfile.mkdtemp()) / "joined"
+        self.assertEqual(f.merge_memory(a, b, out), (1, 0))
+
+    def test_the_index_is_rebuilt_from_both(self):
+        a, b = self.dirs(
+            {"here.md": "x", "MEMORY.md": "- [Here](here.md) - mine\n"},
+            {"there.md": "y", "MEMORY.md": "- [There](there.md) - theirs\n"})
+        out = Path(tempfile.mkdtemp()) / "joined"
+        f.merge_memory(a, b, out)
+        lines = (out / "MEMORY.md").read_text().splitlines()
+        self.assertEqual(len(lines), 2)
+        self.assertTrue(any("here.md" in l for l in lines))
+        self.assertTrue(any("there.md" in l for l in lines))
+
+    def test_this_copy_describes_a_note_both_indexes_name(self):
+        """Both lines describe a note that is kept either way, so neither can
+        be wrong about anything that matters - take the nearer one."""
+        a, b = self.dirs(
+            {"n.md": "x", "MEMORY.md": "- [N](n.md) - mine\n"},
+            {"n.md": "x", "MEMORY.md": "- [N](n.md) - theirs\n"})
+        out = Path(tempfile.mkdtemp()) / "joined"
+        f.merge_memory(a, b, out)
+        self.assertIn("mine", (out / "MEMORY.md").read_text())
+
+    def test_an_index_line_for_a_vanished_note_is_dropped(self):
+        """It would send a reader after a file that is not there."""
+        a, b = self.dirs(
+            {"n.md": "x", "MEMORY.md": "- [N](n.md) - here\n"
+                                       "- [Gone](gone.md) - not here\n"}, {})
+        out = Path(tempfile.mkdtemp()) / "joined"
+        f.merge_memory(a, b, out)
+        self.assertNotIn("gone.md", (out / "MEMORY.md").read_text())
+
+    def test_an_index_line_naming_no_note_survives(self):
+        """A heading, or a note to self - it is not about a note, so nothing
+        can have happened to the note it does not name."""
+        a, b = self.dirs(
+            {"n.md": "x", "MEMORY.md": "# What I know\n- [N](n.md) - here\n"}, {})
+        out = Path(tempfile.mkdtemp()) / "joined"
+        f.merge_memory(a, b, out)
+        self.assertIn("# What I know", (out / "MEMORY.md").read_text())
+
+    def test_the_index_does_not_count_as_a_difference(self):
+        """Two copies whose notes agree are in sync whatever their indexes
+        say - otherwise every change to the notes would look like a change on
+        both sides, because the index changes with them."""
+        a, b = self.dirs({"n.md": "x", "MEMORY.md": "- [N](n.md) - mine\n"},
+                         {"n.md": "x", "MEMORY.md": "- [N](n.md) - theirs\n"})
+        self.assertEqual(f.relation(f.note_set(a), f.note_set(b)), f.SAME)
+
+    def test_a_note_saying_different_things_is_the_one_conflict(self):
+        a, b = self.dirs({"n.md": "mine", "ok.md": "s"},
+                         {"n.md": "theirs", "ok.md": "s"})
+        self.assertEqual(f.conflicting_notes(a, b), ["n.md"])
+
+    def test_a_differing_index_is_not_a_conflict(self):
+        a, b = self.dirs({"MEMORY.md": "- [A](a.md) - mine\n"},
+                         {"MEMORY.md": "- [A](a.md) - theirs\n"})
+        self.assertEqual(f.conflicting_notes(a, b), [])
+
+    def test_notes_in_a_subdirectory_are_carried(self):
+        """The comparison counts nested notes, so the join has to keep them -
+        one it saw and the join did not would be a note quietly dropped."""
+        a, b = self.dirs({"here.md": "x"}, {})
+        (b / "sub").mkdir()
+        (b / "sub" / "deep.md").write_text("y")
+        out = Path(tempfile.mkdtemp()) / "joined"
+        f.merge_memory(a, b, out)
+        self.assertEqual(sorted(str(p.relative_to(out))
+                                for p in out.rglob("*.md")),
+                         ["here.md", "sub/deep.md"])
+        for other in (a, b):
+            self.assertIn(f.relation(f.note_set(out), f.note_set(other)),
+                          (f.SAME, f.AHEAD))
+
+
 class ForkMessages(unittest.TestCase):
     """What memory says when it will not join. Sessions are joined instead, so
     this is the only refusal left, and it has to say enough to act on."""

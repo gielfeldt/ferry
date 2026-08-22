@@ -352,13 +352,11 @@ your clone has diverged.
   keeps every record either had and pushes the result. It never picks between
   them, so nothing is lost — but a session worked on in two places ends up
   holding both branches, which is what Claude Code writes for a rewind anyway.
-- **Memory is not joined.** A transcript is a list of records, so two copies
-  can be put together; a note is prose, and two versions of one note have no
-  join that is not a guess at what you meant. A note edited in both places
-  stops the sync and says which.
-- **Memory is replaced wholesale**, so a note is compared by its name and its
-  contents together. A note edited on both machines is a fork, and stops the
-  sync rather than being merged.
+- **Memory joins too, except a note edited twice.** Notes are separate files,
+  so they join the way files join, and `MEMORY.md` is rebuilt from both indexes
+  rather than chosen between. Only a note that exists on both sides *saying
+  different things* has no join — that is prose, and picking one would be a
+  guess. It names those notes and changes nothing.
 - **Collisions are caught, not resolved.** ferry stops and tells you.
 - **Nothing happens on its own.** No daemon, no watcher, no hook: ferry moves
   exactly what you name, when you name it.
