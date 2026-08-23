@@ -81,7 +81,7 @@ ferry remove <store> [--force]
 ferry sessions [<dir>] [--global] [--all]
 ferry name <session>|<dir>:<session> <name>
 ferry memory [<dir>] [--global]
-ferry sync <session>|<store>:<path>
+ferry sync [<session>|<store>:<path>]
 ferry sync --memory <store>:<dir>
 ferry move <store>:<path> <store>:<dir> [--force]
 ferry move --memory <store>:<dir> <store>:<dir> [--force]
@@ -109,7 +109,8 @@ ferry memory                                  # notes in this directory
 ferry memory ~/develop/acme                   # notes in another
 ferry memory --global                         # every directory that remembers
 
-ferry sync bug-hunt                           # once the store has it
+ferry sync                                    # everything here, both kinds
+ferry sync bug-hunt                           # one session, once stored
 ferry sync work:acme/bug-hunt                 # the first time, to say where
 ferry sync --memory work:acme                 # that folder's notes
 
@@ -204,7 +205,15 @@ folder it should go to:
 ```sh
 ferry sync work:acme/bug-hunt     # the first time
 ferry sync bug-hunt               # every time after
+ferry sync                        # or everything here at once
 ```
+
+With nothing after it, `sync` takes every session in this directory a store
+already has, and this directory's memory with it — **the same set `ferry
+sessions` lists, and the same action it names for each one.** So the listing is
+the dry run: read it, then run `ferry sync` to make it so. A session no store
+has is left alone and said out loud, because where it should go is the one
+thing ferry cannot work out for you.
  Whichever holds everything the
 other holds, and more, is the one that gets copied. A copy is never replaced by
 one holding less, so there is no direction to get wrong and no flag to get

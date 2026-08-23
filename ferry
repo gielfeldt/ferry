@@ -1334,28 +1334,107 @@ def ref_for_name(name):
         + "       say which one")
 
 
+def sync_everything(args):
+    """Everything in this directory that a store already has.
+
+    The same set `ferry sessions` lists, taking the same action it names, so
+    the listing is the dry run: what it says about each session is what this
+    does to it. Nothing new is decided here.
+
+    A session no store has is left alone and said out loud. Where it should go
+    is the one thing ferry cannot work out, and guessing a folder would file a
+    conversation somewhere you did not choose.
+    """
+    here, index = slug_dir(), store_index()
+    named = names_here(here)
+    paired, alone, split = [], [], []
+    for name in sorted(named):
+        hits = index.get(name, [])
+        if len(hits) == 1:
+            paired.append((name, hits[0][0]))
+        elif not hits:
+            alone.append(name)
+        else:
+            split.append(name)
+
+    mem = here / "memory"
+    # Memory has no name to look up, but it belongs to this directory, and this
+    # directory's sessions say which folder of the store that is. One folder
+    # among them is an answer; two would be a guess.
+    folders = {ref.rsplit("/", 1)[0] if "/" in ref.split(":", 1)[1] else
+               ref.split(":")[0] + ":" for _, ref in paired}
+    memory_ref = folders.pop() if len(folders) == 1 else None
+
+    if not paired and not (memory_ref and any(mem.glob("*.md"))):
+        die("nothing here is in a store yet.\n"
+            "       ferry sessions                    what is here\n"
+            "       ferry sync <store>:<dir>/<name>   to say where one goes")
+
+    pulled, failed = set(), 0
+    for name, ref in paired:
+        try:
+            sync_one(args, ref, pulled)
+        except SystemExit:
+            # die() has already said what went wrong. One session that cannot
+            # be synced is not a reason to leave the rest of the directory
+            # behind.
+            failed += 1
+    if memory_ref and any(mem.glob("*.md")):
+        try:
+            sync_one(argparse.Namespace(**{**vars(args), "memory": True}),
+                     memory_ref, pulled)
+        except SystemExit:
+            failed += 1
+
+    for name in alone:
+        print(f"  {name} is in no store - "
+              f"ferry sync <store>:<dir>/{name} to say where it goes")
+    for name in split:
+        print(f"  {name} is in more than one store - "
+              f"name the one you mean")
+    if not memory_ref and any(mem.glob("*.md")):
+        print("  memory here belongs to no one folder of a store - "
+              "ferry sync --memory <store>:<dir>")
+    if failed:
+        sys.exit(1)
+
+
 def cmd_sync(args):
-    """Make one session, or one directory's memory, the same in both places.
+    """Make a session, or a directory's memory, the same in both places.
 
     One argument, and the store ref carries the name, because the direction is
     not worth being told: it follows from which copy holds what. A copy is only
     ever replaced by one holding everything it already held, so there is no
     direction to get wrong and no flag to get wrong either.
 
-    When neither copy holds the other, each has something the other has not,
-    no copy can be made without dropping it, and this stops.
+    With no argument at all, everything in this directory that a store already
+    has - which is what `ferry sessions` has just finished describing.
+    """
+    if args.target is None:
+        return sync_everything(args)
+    return sync_one(args, args.target)
+
+
+def sync_one(args, target, pulled=None):
+    """One session, or one directory's memory.
+
+    `pulled` remembers which stores this run has already brought up to date, so
+    syncing a directory's worth of sessions fetches each store once rather than
+    once per session.
     """
     # A bare name is a session already in a store, which knows its own folder.
     # Memory has no name of its own - it belongs to the directory - so there is
     # nothing there for a bare word to mean.
-    target = args.target
     if ":" not in target and not args.memory:
         target = ref_for_name(target)
     alias, path = split_ref(target, directory=args.memory)
     repo, here = repo_dir(alias), slug_dir()
     # Before anything is compared: comparing against a stale store is how a
     # sync reports a fork that only git was behind on.
-    pull(repo)
+    if pulled is None or repo not in pulled:
+        pull(repo)
+        if pulled is not None:
+            pulled.add(repo)
 
     if args.memory:
         return sync_memory(args, repo, alias, path, here)
@@ -2426,7 +2505,7 @@ USAGE = """\
   ferry sessions [<dir>] [--global] [--all]
   ferry name <session>|<dir>:<session> <name>
   ferry memory [<dir>] [--global]
-  ferry sync <session>|<store>:<path>
+  ferry sync [<session>|<store>:<path>]   without either, everything here
   ferry sync --memory <store>:<dir>
   ferry move <store>:<path> <store>:<dir> [--force]
   ferry move --memory <store>:<dir> <store>:<dir> [--force]
@@ -2457,7 +2536,8 @@ examples:
     ferry memory --global                         everywhere that remembers
 
   move it between machines
-    ferry sync bug-hunt                           once the store has it
+    ferry sync                                    everything here, both kinds
+    ferry sync bug-hunt                           one session, once stored
     ferry sync work:acme/bug-hunt                 the first time, to say where
     ferry sync --memory work:acme                 that folder's notes
     ferry list work                               what the store holds
@@ -2487,6 +2567,12 @@ different things.
 Once a store has a session its name is enough, because the store files it under
 that name and a session keeps one name everywhere. The whole path is only
 needed the first time, to say which folder it should go to.
+
+With nothing after it, sync takes everything in this directory a store already
+has, and this directory's memory with it. That is the same set `ferry sessions`
+lists and the same action it names for each one, so the listing is the dry run.
+A session no store has is left alone and said out loud - where it goes is the
+one thing that cannot be worked out.
 
 --memory is how you say which of the two you mean, everywhere. A store keeps
 them in separate trees, so a session may be called `memory` like anything else.\
@@ -2543,7 +2629,8 @@ def main():
     p.set_defaults(func=cmd_memory)
 
     p = sub.add_parser("sync", help="make a session the same in both places")
-    p.add_argument("target", metavar="<session>|<store>:<path>")
+    p.add_argument("target", nargs="?",
+                   metavar="<session>|<store>:<path>")
     p.add_argument("-m", "--memory", action="store_true",
                    help="this directory's memory, not a session")
     p.add_argument("--allow-plaintext", action="store_true",

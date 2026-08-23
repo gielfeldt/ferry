@@ -102,7 +102,7 @@ and it is the same one everywhere:
 
 ```sh
 # laptop A, finishing up
-ferry sync bug-hunt                    # sent
+ferry sync                             # everything here — sent
 
 # laptop B, starting
 ferry sync work:acme/bug-hunt          # the first time here, so the whole path

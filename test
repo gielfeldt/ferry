@@ -12,6 +12,7 @@ That rules out end-to-end coverage of the git side, which is deliberate for
 now - those tests need a real repo and git-crypt, and they belong in a separate
 script that CI can skip.
 """
+import argparse
 import contextlib
 import importlib.util
 import io
@@ -2201,6 +2202,118 @@ class MemoryMerge(unittest.TestCase):
         for other in (a, b):
             self.assertIn(f.relation(f.note_set(out), f.note_set(other)),
                           (f.SAME, f.AHEAD))
+
+
+class SyncEverything(unittest.TestCase):
+    """`ferry sync` with no argument: this directory's worth.
+
+    The same set `ferry sessions` lists, taking the action it names, so the
+    listing is the dry run rather than a separate description of one.
+    """
+
+    def setUp(self):
+        self.root = Path(tempfile.mkdtemp())
+        self.here = Path(tempfile.mkdtemp())
+        (self.root / "sessions" / "proj").mkdir(parents=True)
+        self._repos, self._slug, self._one = f.repos, f.slug_dir, f.sync_one
+        f.repos = lambda: {"s": {"path": str(self.root)}}
+        f.slug_dir = lambda where=None: self.here
+        self.synced = []
+        f.sync_one = lambda a, t, pulled=None: self.synced.append(t)
+
+    def tearDown(self):
+        f.repos, f.slug_dir, f.sync_one = self._repos, self._slug, self._one
+
+    def local(self, sid, name):
+        (self.here / f"{sid}.jsonl").write_text(
+            f'{{"sessionId":"{sid}","uuid":"1"}}\n'
+            f'{{"type":"custom-title","customTitle":"{name}","sessionId":"{sid}"}}\n')
+
+    def stored(self, folder, name):
+        d = self.root / "sessions" / folder
+        d.mkdir(parents=True, exist_ok=True)
+        (d / f"{name}.jsonl").write_text('{"sessionId":"x","uuid":"1"}\n')
+
+    def run_it(self):
+        with quiet() as (out, err):
+            try:
+                f.sync_everything(argparse.Namespace(memory=False,
+                                                     allow_plaintext=True))
+            except SystemExit:
+                pass
+        return out.getvalue() + err.getvalue()
+
+    def test_it_syncs_what_a_store_already_has(self):
+        self.local("a", "alpha"); self.stored("proj", "alpha")
+        self.local("b", "beta"); self.stored("proj", "beta")
+        self.run_it()
+        self.assertEqual(sorted(self.synced), ["s:proj/alpha", "s:proj/beta"])
+
+    def test_a_session_no_store_has_is_left_alone_and_said(self):
+        """Where it should go is the one thing ferry cannot work out, and
+        guessing a folder would file a conversation somewhere unchosen."""
+        self.local("a", "alpha"); self.stored("proj", "alpha")
+        self.local("c", "orphan")
+        out = self.run_it()
+        self.assertEqual(self.synced, ["s:proj/alpha"])
+        self.assertIn("orphan is in no store", out)
+
+    def test_an_unnamed_session_is_not_swept_up(self):
+        (self.here / "u.jsonl").write_text('{"sessionId":"u","uuid":"1"}\n')
+        self.local("a", "alpha"); self.stored("proj", "alpha")
+        self.run_it()
+        self.assertEqual(self.synced, ["s:proj/alpha"])
+
+    def test_memory_follows_the_folder_its_sessions_are_in(self):
+        """Memory has no name to look up, but it belongs to this directory,
+        and this directory's sessions say which folder that is."""
+        self.local("a", "alpha"); self.stored("proj", "alpha")
+        (self.here / "memory").mkdir()
+        (self.here / "memory" / "n.md").write_text("x")
+        self.run_it()
+        self.assertIn("s:proj", self.synced)
+
+    def test_memory_is_left_when_the_folder_is_not_one_answer(self):
+        """Sessions here living in two folders is a guess, not an answer."""
+        self.local("a", "alpha"); self.stored("proj", "alpha")
+        self.local("b", "beta"); self.stored("other", "beta")
+        (self.here / "memory").mkdir()
+        (self.here / "memory" / "n.md").write_text("x")
+        out = self.run_it()
+        self.assertNotIn("s:proj", self.synced)
+        self.assertIn("belongs to no one folder", out)
+
+    def test_nothing_paired_says_how_to_start(self):
+        self.local("c", "orphan")
+        out = self.run_it()
+        self.assertEqual(self.synced, [])
+        self.assertIn("nothing here is in a store yet", out)
+
+    def test_one_failure_does_not_abandon_the_rest(self):
+        """A session that cannot be synced is not a reason to leave the rest
+        of the directory behind."""
+        def boom(a, t, pulled=None):
+            self.synced.append(t)
+            if t.endswith("alpha"):
+                raise SystemExit(1)
+        f.sync_one = boom
+        self.local("a", "alpha"); self.stored("proj", "alpha")
+        self.local("b", "beta"); self.stored("proj", "beta")
+        with quiet(), self.assertRaises(SystemExit) as e:
+            f.sync_everything(argparse.Namespace(memory=False,
+                                                 allow_plaintext=True))
+        self.assertEqual(e.exception.code, 1)
+        self.assertEqual(sorted(self.synced), ["s:proj/alpha", "s:proj/beta"])
+
+    def test_each_store_is_brought_up_to_date_once(self):
+        """Not once per session: a directory's worth of sessions in one store
+        is one fetch."""
+        seen = []
+        f.sync_one = lambda a, t, pulled=None: seen.append(id(pulled))
+        self.local("a", "alpha"); self.stored("proj", "alpha")
+        self.local("b", "beta"); self.stored("proj", "beta")
+        self.run_it()
+        self.assertEqual(len(set(seen)), 1, "each call got its own pulled set")
 
 
 class ForkMessages(unittest.TestCase):
