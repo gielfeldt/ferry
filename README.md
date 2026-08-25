@@ -113,6 +113,8 @@ ferry sync                                    # everything here, both kinds
 ferry sync bug-hunt                           # one session, once stored
 ferry sync work:acme/bug-hunt                 # the first time, to say where
 ferry sync --memory work:acme                 # that folder's notes
+ferry diff bug-hunt                           # what each copy has alone
+ferry reset bug-hunt                          # take the store's, losing mine
 
 ferry list work                               # its sessions
 ferry list --memory work                      # its memory
@@ -229,6 +231,27 @@ anything.
 they actually followed. That is a shape Claude Code already reads: it is what
 a rewind or an edited turn produces, and most transcripts on a working machine
 hold one.
+
+**`diff` says what would move; `reset` throws yours away.** A listing tells you
+a copy is ahead or forked, which is not enough to act on — forty records could
+be an afternoon's work or a single metadata write. `diff` shows what each side
+holds alone, including the turns that were typed:
+
+```
+private:acme/bug-hunt
+  267 record(s) in both
+  only here: 1 record(s) - 1 atis-latch
+  only there: nothing
+```
+
+`reset` is the one command that loses something on purpose: it takes the
+store's copy and discards whatever was only here. It prints the same summary
+first and asks, and with nothing to ask on it refuses rather than assuming —
+`--yes` when you mean it.
+
+It goes one way only. There is no reset that discards the *store's* copy in
+favour of this machine's: that is a larger thing to do to a machine you are not
+sitting at, and `sync` already keeps both without being asked.
 
 **`move` re-files, it does not rename.** It takes a path and a directory, and
 the leaf goes along unchanged. A session's name lives inside its transcript, so

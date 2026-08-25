@@ -2316,6 +2316,111 @@ class SyncEverything(unittest.TestCase):
         self.assertEqual(len(set(seen)), 1, "each call got its own pulled set")
 
 
+class DiffDescription(unittest.TestCase):
+    """What `diff` says about the records one copy holds alone.
+
+    A count is not something you can act on: forty records could be an
+    afternoon's work or a metadata write, and reset asks you to decide between
+    them. So the turns that were typed come with the count - which is exactly
+    the difference between "1 record" and "1 record, and it is a latch".
+    """
+
+    def test_it_counts_by_kind(self):
+        p = tmpfile('{"type":"user","uuid":"1"}\n'
+                    '{"type":"assistant","uuid":"2"}\n'
+                    '{"type":"user","uuid":"3"}\n')
+        kinds, _ = f.only_in(p, f.line_set(p))
+        self.assertEqual(kinds, {"user": 2, "assistant": 1})
+
+    def test_it_quotes_what_was_typed(self):
+        p = tmpfile('{"type":"user","uuid":"1",'
+                    '"message":{"role":"user","content":"fix the deploy"}}\n')
+        _, said = f.only_in(p, f.line_set(p))
+        self.assertEqual(said, ["fix the deploy"])
+
+    def test_only_the_records_asked_for(self):
+        p = tmpfile('{"type":"user","uuid":"1","message":{"content":"kept"}}\n'
+                    '{"type":"user","uuid":"2","message":{"content":"skipped"}}\n')
+        first = {f.record_key('{"type":"user","uuid":"1",'
+                              '"message":{"content":"kept"}}')}
+        kinds, said = f.only_in(p, first)
+        self.assertEqual((kinds, said), ({"user": 1}, ["kept"]))
+
+    def test_a_tool_result_is_not_quoted(self):
+        """It is bulk, and quoting it would bury the turns that tell you which
+        piece of work this is."""
+        self.assertIsNone(f.record_text(
+            {"message": {"content": "<tool_result>lots and lots</tool_result>"}}))
+
+    def test_structured_content_is_read(self):
+        self.assertEqual(f.record_text(
+            {"message": {"content": [{"type": "text", "text": "hello"},
+                                     {"type": "image"}]}}), "hello")
+
+    def test_a_record_with_nothing_said_is_not_quoted(self):
+        for r in ({}, {"message": None}, {"message": {}},
+                  {"message": {"content": "   "}}):
+            self.assertIsNone(f.record_text(r))
+
+    def test_the_quote_is_capped(self):
+        p = tmpfile('{"type":"user","uuid":"1","message":{"content":"%s"}}\n'
+                    % ("x" * 400))
+        _, said = f.only_in(p, f.line_set(p))
+        self.assertLessEqual(len(said[0]), 97)
+
+    def test_it_shows_only_a_few(self):
+        lines = "".join('{"type":"user","uuid":"%d","message":{"content":"t%d"}}\n'
+                        % (i, i) for i in range(20))
+        p = tmpfile(lines)
+        _, said = f.only_in(p, f.line_set(p))
+        self.assertEqual(len(said), 4)
+
+    def test_an_unparseable_line_still_counts(self):
+        p = tmpfile("not json at all\n")
+        kinds, _ = f.only_in(p, f.line_set(p))
+        self.assertEqual(kinds, {"unparseable": 1})
+
+
+class Confirm(unittest.TestCase):
+    """reset is the one command that loses something on purpose, so it asks."""
+
+    def setUp(self):
+        self._stdin = sys.stdin
+
+    def tearDown(self):
+        sys.stdin = self._stdin
+
+    class Fake(io.StringIO):
+        def __init__(self, text, tty):
+            super().__init__(text)
+            self._tty = tty
+
+        def isatty(self):
+            return self._tty
+
+    def test_yes(self):
+        for answer in ("y\n", "Y\n", "yes\n", " yes \n"):
+            sys.stdin = self.Fake(answer, True)
+            self.assertTrue(f.confirm("go ahead?"), answer)
+
+    def test_anything_else_is_no(self):
+        for answer in ("n\n", "\n", "later\n", "Ynot\n"):
+            sys.stdin = self.Fake(answer, True)
+            self.assertFalse(f.confirm("go ahead?"), answer)
+
+    def test_end_of_input_is_no(self):
+        sys.stdin = self.Fake("", True)
+        self.assertFalse(f.confirm("go ahead?"))
+
+    def test_with_nobody_to_ask_it_refuses(self):
+        """Not "assume yes" and not "assume no" - a pipe cannot answer, and
+        guessing either way is worse than saying so."""
+        sys.stdin = self.Fake("", False)
+        with quiet() as (_, err), self.assertRaises(SystemExit):
+            f.confirm("go ahead?")
+        self.assertIn("--yes", err.getvalue())
+
+
 class ForkMessages(unittest.TestCase):
     """What memory says when it will not join. Sessions are joined instead, so
     this is the only refusal left, and it has to say enough to act on."""
@@ -2686,7 +2791,7 @@ class CommandLine(unittest.TestCase):
         self.calls = []
         self.originals = {}
         for name in ("cmd_add", "cmd_stores", "cmd_sessions", "cmd_memory",
-                     "cmd_sync", "cmd_move", "cmd_list",
+                     "cmd_sync", "cmd_diff", "cmd_reset", "cmd_move", "cmd_list",
                      "cmd_update", "cmd_export"):
             self.originals[name] = getattr(f, name)
             setattr(f, name, lambda args, n=name: self.calls.append((n, args)))
@@ -2716,6 +2821,26 @@ class CommandLine(unittest.TestCase):
         self.assertIn("usage:", out)
         self.assertIn("ferry sync", out)
         self.assertEqual(self.calls, [])
+
+    def test_diff_takes_one_ref(self):
+        self.run_ferry("diff", "bug-hunt")
+        name, args = self.calls[0]
+        self.assertEqual((name, args.target), ("cmd_diff", "bug-hunt"))
+
+    def test_reset_takes_one_ref(self):
+        self.run_ferry("reset", "work:acme/bug-hunt")
+        name, args = self.calls[0]
+        self.assertEqual((name, args.target), ("cmd_reset", "work:acme/bug-hunt"))
+        self.assertFalse(args.yes)
+
+    def test_reset_yes_is_a_flag(self):
+        self.run_ferry("reset", "-y", "bug-hunt")
+        self.assertTrue(self.calls[0][1].yes)
+
+    def test_diff_has_no_yes(self):
+        """It writes nothing, so there is nothing to agree to."""
+        with quiet(), self.assertRaises(SystemExit):
+            self.run_ferry("diff", "--yes", "bug-hunt")
 
     def test_sync_takes_one_ref(self):
         self.run_ferry("sync", "work:acme/bug-hunt")

@@ -15,6 +15,7 @@ Worked examples. Each one stands alone; skip to the situation you are in.
 - [Reorganise a store](#reorganise-a-store)
 - [Upgrading a store from before 1.2](#upgrading-a-store-from-before-12)
 - [Sessions loaded under the wrong id](#sessions-loaded-under-the-wrong-id-before-133)
+- [Look before you sync, and back out if you must](#look-before-you-sync-and-back-out-if-you-must)
 - [When sync refuses](#when-sync-refuses)
 - [When update says DIVERGED](#when-update-says-diverged)
 - [Adopt a checkout you already have](#adopt-a-checkout-you-already-have)
@@ -479,6 +480,52 @@ once you can see both.
 
 Compacting is not affected and never was: it appends a summary to the same
 transcript under the same id, rather than starting a new session.
+
+## Look before you sync, and back out if you must
+
+`ferry sessions` says a copy is ahead or forked. `ferry diff` says of what:
+
+```sh
+ferry diff bug-hunt
+#   private:acme/bug-hunt
+#     267 record(s) in both
+#     only here: 1 record(s) - 1 atis-latch
+#     only there: nothing
+```
+
+That distinction matters before you act. "Ahead by one record" sounds like work
+you would be pushing; one `atis-latch` is a piece of bookkeeping you never
+typed. `diff` quotes the turns that were, so you can tell the two apart:
+
+```
+#     only here: 12 record(s) - 7 assistant, 5 user
+#          > can you check why the deploy is failing
+#          > try the staging cluster instead
+```
+
+It reads and writes nothing, on either side.
+
+When the work here was a false start, `ferry reset` takes the store's copy and
+drops whatever was only local:
+
+```sh
+ferry reset bug-hunt
+#   resetting private:acme/bug-hunt to the store's copy
+#     losing: 12 record(s) - 7 assistant, 5 user
+#          > can you check why the deploy is failing
+#     gaining: nothing
+#   replace this machine's copy? [y/N]
+```
+
+It is the only command in ferry that throws work away, so it shows you what
+would go and asks. Piped or scripted, with nothing to answer on, it refuses
+rather than assuming — `--yes` says you meant it.
+
+`--memory` resets a directory's notes the same way.
+
+Reset goes one way only. There is no reset that discards the store's copy in
+favour of this machine's — that is a larger thing to do to a machine you are
+not sitting at, and syncing a fork already keeps both without being asked.
 
 ## When sync refuses
 

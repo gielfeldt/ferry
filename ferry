@@ -1399,6 +1399,182 @@ def sync_everything(args):
         sys.exit(1)
 
 
+def record_text(record):
+    """What a record says, when it says anything a person wrote or read.
+
+    Only the message content, and only when it is plain text: a tool result or
+    an attachment is bulk, and quoting it in a summary of what differs would
+    bury the turns that tell you which piece of work this is.
+    """
+    message = record.get("message")
+    if not isinstance(message, dict):
+        return None
+    content = message.get("content")
+    if isinstance(content, list):
+        content = " ".join(b.get("text", "") for b in content
+                           if isinstance(b, dict) and b.get("type") == "text")
+    if not isinstance(content, str) or not content.strip():
+        return None
+    text = " ".join(content.split())
+    return None if text.startswith("<") else text
+
+
+def only_in(jsonl, keys, limit=4):
+    """A description of the records of jsonl whose key is in keys.
+
+    Returns (counts by type, a few lines of what was said). The count alone
+    does not tell you what you would be giving up - "41 records" could be an
+    afternoon's work or a metadata write - so the turns come with it.
+    """
+    kinds, said = {}, []
+    try:
+        with jsonl.open(errors="replace") as fh:
+            for line in fh:
+                if record_key(line) not in keys:
+                    continue
+                try:
+                    record = json.loads(line)
+                except json.JSONDecodeError:
+                    kinds["unparseable"] = kinds.get("unparseable", 0) + 1
+                    continue
+                kind = record.get("type", "?")
+                kinds[kind] = kinds.get(kind, 0) + 1
+                text = record_text(record) if kind == "user" else None
+                if text and len(said) < limit:
+                    said.append(text[:96] + ("…" if len(text) > 96 else ""))
+    except OSError:
+        pass
+    return kinds, said
+
+
+def show_side(label, jsonl, keys):
+    """One half of a diff: how many, of what, and what was said."""
+    if not keys:
+        print(f"  {label}: nothing")
+        return
+    kinds, said = only_in(jsonl, keys)
+    shape = ", ".join(f"{n} {k}" for k, n in sorted(kinds.items(),
+                                                    key=lambda kv: -kv[1]))
+    print(f"  {label}: {len(keys)} record(s) - {shape}")
+    for line in said:
+        print(f"       > {line}")
+
+
+def both_copies(args, target):
+    """Resolve a ref to (alias, path, repo, this copy, the store's copy).
+
+    Shared by diff and reset, which ask the same question sync asks - which two
+    files are we talking about - and must answer it the same way, including the
+    fetch. Comparing against a stale clone is how you are shown a difference
+    that only git was behind on.
+    """
+    if ":" not in target and not args.memory:
+        target = ref_for_name(target)
+    alias, path = split_ref(target, directory=args.memory)
+    repo, here = repo_dir(alias), slug_dir()
+    pull(repo)
+    if args.memory:
+        return alias, path, repo, here / "memory", \
+            repo / in_store(path, memory=True)
+    theirs = repo / f"{in_store(path)}.jsonl"
+    if not theirs.exists():
+        die(f"nothing at {alias}:{path}")
+    sid = session_id_of(theirs)
+    if not sid:
+        die(f"cannot tell which session {alias}:{path} is - no id inside it")
+    return alias, path, repo, here / f"{sid}.jsonl", theirs
+
+
+def cmd_diff(args):
+    """What each copy of a session, or of a directory's memory, holds alone.
+
+    `sessions` says a copy is ahead or forked; this says of what. A count is
+    not enough to act on - forty records could be an afternoon's work or a
+    metadata write - so the turns that were typed come with it.
+
+    Reads only. Nothing here writes anything.
+    """
+    alias, path, _, ours, theirs = both_copies(args, args.target)
+    print(f"{alias}:{path}")
+    if args.memory:
+        a, b = note_set(ours), note_set(theirs)
+        names = lambda pairs: sorted({n for n, _ in pairs})
+        both = set(names(a)) & set(names(b))
+        clash = conflicting_notes(ours, theirs)
+        print(f"  {len(set(names(a)) & set(names(b))) - len(clash)} "
+              f"note(s) the same in both")
+        for label, only in (("only here", set(names(a)) - set(names(b))),
+                            ("only there", set(names(b)) - set(names(a)))):
+            print(f"  {label}: {', '.join(sorted(only)) if only else 'nothing'}")
+        print(f"  differing: {', '.join(clash) if clash else 'nothing'}")
+        return
+    if not ours.exists():
+        print(f"  not on this machine - sync would bring it here")
+        return
+    a, b = line_set(ours), line_set(theirs)
+    print(f"  {len(a & b)} record(s) in both")
+    show_side("only here", ours, a - b)
+    show_side("only there", theirs, b - a)
+    if a == b:
+        print("  the two are the same")
+
+
+def confirm(question):
+    """Ask before losing something. Refuses rather than assumes when there is
+    nobody to ask - a script that meant it can say --yes."""
+    if not sys.stdin.isatty():
+        die(f"{question}\n       nothing to answer on, so nothing was done - "
+            f"pass --yes if you meant it")
+    try:
+        return input(f"  {question} [y/N] ").strip().lower() in ("y", "yes")
+    except EOFError:
+        return False
+
+
+def cmd_reset(args):
+    """Throw away what is only on this machine and take the store's copy.
+
+    The one command in ferry that loses something on purpose. sync never picks
+    between two copies; this picks the store's, which is what you want when the
+    work here was a false start - and it is the way out of a fork for someone
+    who does not want the join.
+
+    It goes one way only. There is no reset that discards the store's copy in
+    favour of this one: that is a larger thing to do to a machine you are not
+    sitting at, and sync already keeps both without being asked.
+    """
+    alias, path, _, ours, theirs = both_copies(args, args.target)
+    if args.memory:
+        gone = sorted(n for n, _ in note_set(ours) - note_set(theirs))
+        if not gone and relation(note_set(ours), note_set(theirs)) == SAME:
+            print(f"memory {alias}:{path} is already the store's copy")
+            return
+        print(f"resetting memory {alias}:{path} to the store's copy")
+        print(f"  losing: {', '.join(gone) if gone else 'nothing'}")
+        if not (args.yes or confirm("replace this directory's memory?")):
+            return print("  nothing was done")
+        ours.parent.mkdir(parents=True, exist_ok=True)
+        replace_dir(theirs, ours)
+        print(f"  reset to {len(note_set(ours))} note(s)")
+        return
+
+    if not ours.exists():
+        print(f"nothing here to reset - sync would bring {alias}:{path} here")
+        return
+    a, b = line_set(ours), line_set(theirs)
+    if a == b:
+        print(f"{alias}:{path} is already the store's copy")
+        return
+    print(f"resetting {alias}:{path} to the store's copy")
+    show_side("losing", ours, a - b)
+    show_side("gaining", theirs, b - a)
+    if not (args.yes or confirm("replace this machine's copy?")):
+        return print("  nothing was done")
+    delta = size_delta(theirs, ours)
+    shutil.copyfile(theirs, ours)
+    print(f"  reset {alias}:{path}  ({delta})")
+
+
 def cmd_sync(args):
     """Make a session, or a directory's memory, the same in both places.
 
@@ -1814,6 +1990,8 @@ COMMANDS = {
     "sessions": ["--global", "--all"],
     "memory":   ["--global"],
     "sync":     ["--memory", "--allow-plaintext"],
+    "diff":     ["--memory"],
+    "reset":    ["--memory", "--yes"],
     "move":     ["--memory", "--force"],
     "export":   ["--tools", "--media", "--raw", "--all", "--memory"],
     "name":     [],
@@ -2507,6 +2685,8 @@ USAGE = """\
   ferry memory [<dir>] [--global]
   ferry sync [<session>|<store>:<path>]   without either, everything here
   ferry sync --memory <store>:<dir>
+  ferry diff <session>|<store>:<path> [--memory]
+  ferry reset <session>|<store>:<path> [--memory] [--yes]
   ferry move <store>:<path> <store>:<dir> [--force]
   ferry move --memory <store>:<dir> <store>:<dir> [--force]
   ferry list [<store>[:<path>]]           without a store, same as `stores`
@@ -2540,6 +2720,8 @@ examples:
     ferry sync bug-hunt                           one session, once stored
     ferry sync work:acme/bug-hunt                 the first time, to say where
     ferry sync --memory work:acme                 that folder's notes
+    ferry diff bug-hunt                           what each copy has alone
+    ferry reset bug-hunt                          take the store's, losing mine
     ferry list work                               what the store holds
     ferry list --memory work                      its memory
     ferry update work
@@ -2563,6 +2745,10 @@ something the other does not, both are kept: every record either had, checked
 to hold both before anything is replaced. Memory joins the same way - notes are
 separate files - and stops only for a note that exists on both sides saying
 different things.
+
+diff says what each copy holds that the other does not, and reset takes the
+store's copy and loses whatever was only here - the one thing ferry does that
+throws work away, so it shows you what would go and asks first.
 
 Once a store has a session its name is enough, because the store files it under
 that name and a session keeps one name everywhere. The whole path is only
@@ -2637,6 +2823,20 @@ def main():
                    help="commit even though the store has no git-crypt")
     p.set_defaults(func=cmd_sync)
 
+
+    p = sub.add_parser("diff", help="what each copy holds that the other does not")
+    p.add_argument("target", metavar="<session>|<store>:<path>")
+    p.add_argument("-m", "--memory", action="store_true",
+                   help="this directory's memory, not a session")
+    p.set_defaults(func=cmd_diff)
+
+    p = sub.add_parser("reset", help="take the store's copy, losing local changes")
+    p.add_argument("target", metavar="<session>|<store>:<path>")
+    p.add_argument("-m", "--memory", action="store_true",
+                   help="this directory's memory, not a session")
+    p.add_argument("-y", "--yes", action="store_true",
+                   help="do not ask first")
+    p.set_defaults(func=cmd_reset)
 
     p = sub.add_parser("move", help="re-file something inside a store")
     p.add_argument("source", metavar="<store>:<path>")

@@ -12,7 +12,8 @@ encrypted git repo, and reads what is on this one. It is a single command; run
 
 **Read freely. Never change anything without being asked in this
 conversation.** Reading is `sessions`, `memory`, `list`, `export`, `stores`.
-Everything else — `sync`, `move`, `name`, `add`, `rename`, `remove` —
+`diff` reads too, and is the right way to answer "what would syncing move?".
+Everything else — `sync`, `reset`, `move`, `name`, `add`, `rename`, `remove` —
 alters a transcript, a store or the registry. Propose the exact command and let
 the user run it, or run it only after they say yes to that specific command.
 
@@ -87,6 +88,7 @@ begin with `.` or `-`.
 
 ## Checking what is in a store
 
+    ferry diff <session>          what each copy holds that the other does not
     ferry list <store>            sessions in a store
     ferry list --memory <store>   the memory it holds
     ferry stores                  which stores are registered here
@@ -112,3 +114,7 @@ either had; memory joins too, stopping only for a note that says different
 things in each place. Once a store has the session, `ferry sync <name>` is enough — the
 listing's ref column shows what a name resolves to. Never run it to "just
 check": it writes and pushes whenever this machine is not the one behind.
+
+`ferry reset` throws away whatever is only on this machine and takes the
+store's copy. It is the one command here that loses work on purpose. Never run
+it; say what it would do, and let the user run it.
