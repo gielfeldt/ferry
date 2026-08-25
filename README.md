@@ -240,9 +240,14 @@ holds alone, including the turns that were typed:
 ```
 private:acme/bug-hunt
   267 record(s) in both
-  only here: 1 record(s) - 1 atis-latch
+  only here: 1 record(s), none of it conversation
+       session state Claude Code keeps: 1 atis-latch
   only there: nothing
 ```
+
+A transcript holds two kinds of record: the conversation, and the state Claude
+Code keeps beside it — modes, titles, latches. Only one of them is yours, so
+`diff` counts them apart and leads with the one you would miss.
 
 `reset` is the one command that loses something on purpose: it takes the
 store's copy and discards whatever was only here. It prints the same summary

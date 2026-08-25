@@ -489,19 +489,26 @@ transcript under the same id, rather than starting a new session.
 ferry diff bug-hunt
 #   private:acme/bug-hunt
 #     267 record(s) in both
-#     only here: 1 record(s) - 1 atis-latch
+#     only here: 1 record(s), none of it conversation
+#          session state Claude Code keeps: 1 atis-latch
 #     only there: nothing
 ```
 
-That distinction matters before you act. "Ahead by one record" sounds like work
-you would be pushing; one `atis-latch` is a piece of bookkeeping you never
-typed. `diff` quotes the turns that were, so you can tell the two apart:
+That distinction is the whole point. "Ahead by one record" sounds like work you
+would be pushing; here it is Claude Code latching a setting of its own, and
+nobody typed anything. A transcript holds both kinds — the conversation, and
+the state Claude Code keeps beside it — and only one of them is yours. So diff
+counts them apart, and quotes what was actually written:
 
 ```
-#     only here: 12 record(s) - 7 assistant, 5 user
+#     only here: 12 record(s) of conversation, and 3 of session state
 #          > can you check why the deploy is failing
 #          > try the staging cluster instead
 ```
+
+The two are told apart by whether a record carries a `uuid`: `user`,
+`assistant`, `system` and `attachment` do; `mode`, `custom-title`,
+`last-prompt`, `atis-latch` and the rest do not.
 
 It reads and writes nothing, on either side.
 

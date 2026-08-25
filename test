@@ -2325,17 +2325,27 @@ class DiffDescription(unittest.TestCase):
     the difference between "1 record" and "1 record, and it is a latch".
     """
 
-    def test_it_counts_by_kind(self):
+    def test_conversation_is_counted_apart_from_bookkeeping(self):
+        """Whether the difference contains anything a person wrote is the
+        whole question, so it is the number that leads."""
         p = tmpfile('{"type":"user","uuid":"1"}\n'
                     '{"type":"assistant","uuid":"2"}\n'
-                    '{"type":"user","uuid":"3"}\n')
-        kinds, _ = f.only_in(p, f.line_set(p))
-        self.assertEqual(kinds, {"user": 2, "assistant": 1})
+                    '{"type":"mode","mode":"normal"}\n')
+        turns, state, _ = f.only_in(p, f.line_set(p))
+        self.assertEqual((turns, state), (2, {"mode": 1}))
+
+    def test_a_difference_of_pure_bookkeeping_says_so(self):
+        """An `atis-latch` is Claude Code latching its own state. Reporting it
+        as "1 record" sends you looking up an internal name to discover that
+        nothing happened."""
+        p = tmpfile('{"type":"atis-latch","atis":"","sessionId":"x"}\n')
+        turns, state, _ = f.only_in(p, f.line_set(p))
+        self.assertEqual((turns, state), (0, {"atis-latch": 1}))
 
     def test_it_quotes_what_was_typed(self):
         p = tmpfile('{"type":"user","uuid":"1",'
                     '"message":{"role":"user","content":"fix the deploy"}}\n')
-        _, said = f.only_in(p, f.line_set(p))
+        _, _, said = f.only_in(p, f.line_set(p))
         self.assertEqual(said, ["fix the deploy"])
 
     def test_only_the_records_asked_for(self):
@@ -2343,8 +2353,8 @@ class DiffDescription(unittest.TestCase):
                     '{"type":"user","uuid":"2","message":{"content":"skipped"}}\n')
         first = {f.record_key('{"type":"user","uuid":"1",'
                               '"message":{"content":"kept"}}')}
-        kinds, said = f.only_in(p, first)
-        self.assertEqual((kinds, said), ({"user": 1}, ["kept"]))
+        turns, _, said = f.only_in(p, first)
+        self.assertEqual((turns, said), (1, ["kept"]))
 
     def test_a_tool_result_is_not_quoted(self):
         """It is bulk, and quoting it would bury the turns that tell you which
@@ -2365,20 +2375,20 @@ class DiffDescription(unittest.TestCase):
     def test_the_quote_is_capped(self):
         p = tmpfile('{"type":"user","uuid":"1","message":{"content":"%s"}}\n'
                     % ("x" * 400))
-        _, said = f.only_in(p, f.line_set(p))
+        _, _, said = f.only_in(p, f.line_set(p))
         self.assertLessEqual(len(said[0]), 97)
 
     def test_it_shows_only_a_few(self):
-        lines = "".join('{"type":"user","uuid":"%d","message":{"content":"t%d"}}\n'
+        lines = "".join('{"type":"user","uuid":"u%d","message":{"content":"t%d"}}\n'
                         % (i, i) for i in range(20))
         p = tmpfile(lines)
-        _, said = f.only_in(p, f.line_set(p))
+        _, _, said = f.only_in(p, f.line_set(p))
         self.assertEqual(len(said), 4)
 
     def test_an_unparseable_line_still_counts(self):
         p = tmpfile("not json at all\n")
-        kinds, _ = f.only_in(p, f.line_set(p))
-        self.assertEqual(kinds, {"unparseable": 1})
+        turns, state, _ = f.only_in(p, f.line_set(p))
+        self.assertEqual((turns, state), (0, {"unparseable": 1}))
 
 
 class Confirm(unittest.TestCase):

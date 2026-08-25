@@ -1422,11 +1422,18 @@ def record_text(record):
 def only_in(jsonl, keys, limit=4):
     """A description of the records of jsonl whose key is in keys.
 
-    Returns (counts by type, a few lines of what was said). The count alone
-    does not tell you what you would be giving up - "41 records" could be an
-    afternoon's work or a metadata write - so the turns come with it.
+    Returns (how many are conversation, counts by type for the rest, a few
+    lines of what was said).
+
+    Conversation is told from bookkeeping by whether a record carries a uuid,
+    which is exactly what divides them: user, assistant, system and attachment
+    do; mode, permission-mode, custom-title, last-prompt and the rest do not.
+    That distinction is the whole answer to "does this difference matter" - a
+    lone `atis-latch` is Claude Code latching its own state, not something
+    anybody wrote, and a count that does not say so leaves you to look up an
+    internal name to find out nothing happened.
     """
-    kinds, said = {}, []
+    turns, state, said = 0, {}, []
     try:
         with jsonl.open(errors="replace") as fh:
             for line in fh:
@@ -1435,27 +1442,36 @@ def only_in(jsonl, keys, limit=4):
                 try:
                     record = json.loads(line)
                 except json.JSONDecodeError:
-                    kinds["unparseable"] = kinds.get("unparseable", 0) + 1
+                    state["unparseable"] = state.get("unparseable", 0) + 1
                     continue
                 kind = record.get("type", "?")
-                kinds[kind] = kinds.get(kind, 0) + 1
+                if record.get("uuid"):
+                    turns += 1
+                else:
+                    state[kind] = state.get(kind, 0) + 1
+                    continue
                 text = record_text(record) if kind == "user" else None
                 if text and len(said) < limit:
                     said.append(text[:96] + ("…" if len(text) > 96 else ""))
     except OSError:
         pass
-    return kinds, said
+    return turns, state, said
 
 
 def show_side(label, jsonl, keys):
-    """One half of a diff: how many, of what, and what was said."""
+    """One half of a diff, led by the part you would actually miss."""
     if not keys:
         print(f"  {label}: nothing")
         return
-    kinds, said = only_in(jsonl, keys)
-    shape = ", ".join(f"{n} {k}" for k, n in sorted(kinds.items(),
+    turns, state, said = only_in(jsonl, keys)
+    kinds = ", ".join(f"{n} {k}" for k, n in sorted(state.items(),
                                                     key=lambda kv: -kv[1]))
-    print(f"  {label}: {len(keys)} record(s) - {shape}")
+    if not turns:
+        print(f"  {label}: {len(keys)} record(s), none of it conversation")
+        print(f"       session state Claude Code keeps: {kinds}")
+        return
+    tail = f", and {sum(state.values())} of session state" if state else ""
+    print(f"  {label}: {turns} record(s) of conversation{tail}")
     for line in said:
         print(f"       > {line}")
 
