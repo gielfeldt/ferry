@@ -2401,16 +2401,21 @@ class Confirm(unittest.TestCase):
     def test_yes(self):
         for answer in ("y\n", "Y\n", "yes\n", " yes \n"):
             sys.stdin = self.Fake(answer, True)
-            self.assertTrue(f.confirm("go ahead?"), answer)
+            with quiet():
+                got = f.confirm("go ahead?")
+            self.assertTrue(got, answer)
 
     def test_anything_else_is_no(self):
         for answer in ("n\n", "\n", "later\n", "Ynot\n"):
             sys.stdin = self.Fake(answer, True)
-            self.assertFalse(f.confirm("go ahead?"), answer)
+            with quiet():
+                got = f.confirm("go ahead?")
+            self.assertFalse(got, answer)
 
     def test_end_of_input_is_no(self):
         sys.stdin = self.Fake("", True)
-        self.assertFalse(f.confirm("go ahead?"))
+        with quiet():
+            self.assertFalse(f.confirm("go ahead?"))
 
     def test_with_nobody_to_ask_it_refuses(self):
         """Not "assume yes" and not "assume no" - a pipe cannot answer, and
@@ -2934,8 +2939,18 @@ class CommandLine(unittest.TestCase):
         text = out.getvalue()
         # Only this command's own options block: ferry prints the whole
         # synopsis above it, which names every other command's flags too.
-        _, _, opts = text.rpartition("options:")
-        return set(re.findall(r"(--[a-z][a-z-]+)", opts)) - {"--help"}
+        #
+        # Both spellings of the heading. argparse called it "optional
+        # arguments" until 3.10 and "options" after, and ferry's floor is 3.9 -
+        # matching only the newer one made this pass locally and fail on CI,
+        # because a split that finds nothing hands back the whole text and the
+        # synopsis is full of other commands' flags.
+        parts = re.split(r"^(?:options|optional arguments):\s*$", text,
+                         flags=re.M)
+        self.assertGreater(len(parts), 1,
+                           f"no options block in `ferry {command} --help` - "
+                           f"has argparse renamed the heading again?")
+        return set(re.findall(r"(--[a-z][a-z-]+)", parts[-1])) - {"--help"}
 
     def test_the_completion_table_matches_the_parser(self):
         """Completion offers flags from its own table, so a flag added to a

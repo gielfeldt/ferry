@@ -54,6 +54,14 @@ curl -fsSL https://raw.githubusercontent.com/gielfeldt/ferry/main/install.sh | s
 almost certainly newer than the floor — so `match`, `X | None` in annotations
 and anything else from 3.10 onwards will pass locally and fail on CI.
 
+That cuts both ways in the tests. One of them read argparse's own `--help` and
+split it on `options:`, which is what the heading is called from 3.10 onwards;
+on 3.9 it is `optional arguments:`, the split found nothing, and the test
+silently checked the whole synopsis instead. It passed on every machine here
+and failed every CI run for a week. **Check the CI result, not only the local
+one** — `gh run list --workflow=test.yml` — because a suite that is green in
+front of you can be red where it matters.
+
 ## Tests
 
 ```sh
