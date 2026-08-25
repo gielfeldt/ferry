@@ -1971,6 +1971,14 @@ def list_one(alias, path, memory):
 # flag as --key. Only --media has no short form, by design.
 FILE_FLAGS = {"--key", "-k", "--path", "-p", "--media"}
 
+# Commands that name one thing held in both places - the same ref, and so the
+# same candidates. A command added here without being added to the completion
+# dispatch offers nothing at all, which is how diff and reset shipped.
+PAIRED = {"sync", "diff", "reset"}
+
+# Commands whose first word is a store already registered here.
+NAMES_A_STORE = {"update", "rename", "remove"}
+
 # Commands that take nothing at all after them.
 NO_ARGS = {"stores"}
 
@@ -2181,16 +2189,20 @@ def cmd_complete(args):
                 out = sorted(tilde(d) for d in here) if here is not None else \
                     [d[:-1] for d in dir_refs(everything=True)]
                 out = [d for d in out if d.startswith(cur)]
-        elif cmd == "update":
+        elif cmd in NAMES_A_STORE and len(prev) == 2:
+            # update, rename and remove all take a registered store first, and
+            # ferry is the only thing that knows which names exist. rename's
+            # second word is the new name, which nothing can guess.
             out = [n for n in sorted(repos()) if n.startswith(cur)]
         elif cmd == "list":
             out = store_refs(cur, "memory" if memory else "session")
-        elif cmd == "sync":
-            # One ref, and it is a store ref whichever way the sync will go.
-            # The store's own tree is walked a level at a time, and the
-            # sessions in this directory that the store already has are named
-            # outright - they are the likely answer, and the walk to reach
-            # them is the whole width of the store.
+        elif cmd in PAIRED:
+            # sync, diff and reset all name one thing that exists in both
+            # places, so they take the same ref and offer the same candidates.
+            # The store's own tree is walked a level at a time, and the sessions
+            # in this directory that the store already has are named outright -
+            # they are the likely answer, and the walk to reach them is the
+            # whole width of the store.
             out = store_refs(cur, "memory" if memory else "session")
             if not memory:
                 mine = synced_refs(cur)

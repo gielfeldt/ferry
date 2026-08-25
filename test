@@ -2960,6 +2960,49 @@ class CommandLine(unittest.TestCase):
             with self.subTest(command=command):
                 self.assertEqual(set(listed), self.flags_of(command))
 
+    def first_argument(self, command):
+        """What completion offers for a command's first argument, and how."""
+        sys.argv = ["ferry", "complete", "--line", f"ferry {command} "]
+        code = 0
+        with quiet() as (out, _):
+            try:
+                f.main()
+            except SystemExit as e:
+                code = e.code or 0
+        return code, out.getvalue().split()
+
+    # add invents a name and rename's second word is one too, so there is
+    # genuinely nothing to offer; stores takes no argument at all.
+    OFFERS_NOTHING = {"add", "stores"}
+
+    def test_every_command_completes_its_first_argument(self):
+        """A command can be added to the parser and to the flag table and
+        still have no branch in the completion dispatch - and then it offers
+        nothing at all, silently, which is how diff and reset shipped. It is
+        also how rename and remove had gone without ever offering a store."""
+        for command in sorted(f.COMMANDS):
+            if command in self.OFFERS_NOTHING:
+                continue
+            with self.subTest(command=command):
+                code, got = self.first_argument(command)
+                self.assertTrue(got or code in (f.NOTHING, f.FILES),
+                                f"`ferry {command} <TAB>` offers nothing and "
+                                f"does not say why")
+
+    def test_the_paired_commands_offer_the_same_things(self):
+        """sync, diff and reset name one thing held in both places, so they
+        take the same ref and must answer alike."""
+        expected = self.first_argument("sync")
+        for command in sorted(f.PAIRED - {"sync"}):
+            with self.subTest(command=command):
+                self.assertEqual(self.first_argument(command), expected)
+
+    def test_a_store_name_is_offered_where_one_is_wanted(self):
+        for command in sorted(f.NAMES_A_STORE):
+            with self.subTest(command=command):
+                _, got = self.first_argument(command)
+                self.assertTrue(set(got) <= set(f.repos()), got)
+
     def test_every_flag_in_the_examples_is_real(self):
         """The examples are the first thing anyone tries."""
         for line in f.EXAMPLES.splitlines():
