@@ -249,6 +249,13 @@ A transcript holds two kinds of record: the conversation, and the state Claude
 Code keeps beside it — modes, titles, latches. Only one of them is yours, so
 `diff` counts them apart and leads with the one you would miss.
 
+Most of that state is disposable, because it restates itself every turn. Four
+kinds are not, and are marked `!` wherever they appear: `custom-title` (the
+session's name), the two `file-history-*` records (what lets Claude Code rewind
+file edits), `queue-operation` (a prompt not yet sent) and `last-prompt` (where
+a resume carries on). If `diff` shows no conversation on your side and no `!`,
+`reset` has nothing to take that you would notice.
+
 `reset` is the one command that loses something on purpose: it takes the
 store's copy and discards whatever was only here. It prints the same summary
 first and asks, and with nothing to ask on it refuses rather than assuming —

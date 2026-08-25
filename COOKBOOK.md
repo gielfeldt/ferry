@@ -510,6 +510,25 @@ The two are told apart by whether a record carries a `uuid`: `user`,
 `assistant`, `system` and `attachment` do; `mode`, `custom-title`,
 `last-prompt`, `atis-latch` and the rest do not.
 
+### Is it safe to reset?
+
+Most session state is disposable because it restates itself: `mode` and
+`permission-mode` are written again every turn, `ai-title` is regenerated, and
+a latch holds a flag nobody chose. Losing a copy of one costs nothing.
+
+Four are not, and `diff` and `reset` mark them with `!`:
+
+| | |
+|---|---|
+| `custom-title` | the session's **name**. ferry finds sessions by it, and so does `claude --resume`. Renamed here but not synced? Resetting reverts the name. |
+| `file-history-snapshot`, `file-history-delta` | Claude Code's record of file edits, which is what lets you rewind them |
+| `queue-operation` | a prompt queued and not yet sent |
+| `last-prompt` | which turn a resume carries on from |
+
+So the check is: run `ferry diff`, and if it reports conversation on your side,
+or marks any line with `!`, reset will take something you would notice. If it
+says *none of it conversation* with no `!`, there is nothing there to lose.
+
 It reads and writes nothing, on either side.
 
 When the work here was a false start, `ferry reset` takes the store's copy and

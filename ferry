@@ -1399,6 +1399,22 @@ def sync_everything(args):
         sys.exit(1)
 
 
+# Not all of a transcript's bookkeeping is disposable. Most of it restates
+# itself constantly - mode and permission-mode are written again every turn, a
+# latch holds a flag nobody chose - so losing a copy of one costs nothing. These
+# do not: each is the only record of something, and dropping it drops the thing.
+CONSEQUENTIAL = {
+    "custom-title": "the session's name - ferry finds sessions by it, and so "
+                    "does claude --resume",
+    "file-history-snapshot": "Claude Code's record of file edits, which is what "
+                             "lets you rewind them",
+    "file-history-delta": "Claude Code's record of file edits, which is what "
+                          "lets you rewind them",
+    "queue-operation": "a prompt queued and not yet sent",
+    "last-prompt": "which turn a resume carries on from",
+}
+
+
 def record_text(record):
     """What a record says, when it says anything a person wrote or read.
 
@@ -1469,11 +1485,16 @@ def show_side(label, jsonl, keys):
     if not turns:
         print(f"  {label}: {len(keys)} record(s), none of it conversation")
         print(f"       session state Claude Code keeps: {kinds}")
-        return
-    tail = f", and {sum(state.values())} of session state" if state else ""
-    print(f"  {label}: {turns} record(s) of conversation{tail}")
-    for line in said:
-        print(f"       > {line}")
+    else:
+        tail = f", and {sum(state.values())} of session state" if state else ""
+        print(f"  {label}: {turns} record(s) of conversation{tail}")
+        for line in said:
+            print(f"       > {line}")
+    # Said whichever side it turns up on, because "none of it conversation"
+    # otherwise reads as "nothing worth keeping" - and one of these is the
+    # session's name.
+    for kind in sorted(k for k in state if k in CONSEQUENTIAL):
+        print(f"       ! {kind} is {CONSEQUENTIAL[kind]}")
 
 
 def both_copies(args, target):

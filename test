@@ -2334,6 +2334,38 @@ class DiffDescription(unittest.TestCase):
         turns, state, _ = f.only_in(p, f.line_set(p))
         self.assertEqual((turns, state), (2, {"mode": 1}))
 
+    def test_the_state_that_matters_is_called_out(self):
+        """"none of it conversation" reads as "nothing worth keeping", and one
+        of these is the session's name - ferry finds sessions by it."""
+        p = tmpfile('{"type":"custom-title","customTitle":"renamed"}\n')
+        with quiet() as (out, _):
+            f.show_side("losing", p, f.line_set(p))
+        self.assertIn("custom-title is the session's name", out.getvalue())
+
+    def test_it_is_called_out_beside_conversation_too(self):
+        p = tmpfile('{"type":"user","uuid":"1","message":{"content":"hi"}}\n'
+                    '{"type":"file-history-delta","messageId":"m"}\n')
+        with quiet() as (out, _):
+            f.show_side("losing", p, f.line_set(p))
+        self.assertIn("1 record(s) of conversation", out.getvalue())
+        self.assertIn("lets you rewind", out.getvalue())
+
+    def test_disposable_state_is_not_called_out(self):
+        """mode and permission-mode are rewritten every turn, and a latch holds
+        a flag nobody chose - saying something about each would bury the one
+        line that matters."""
+        p = tmpfile('{"type":"mode","mode":"normal"}\n'
+                    '{"type":"atis-latch","atis":""}\n'
+                    '{"type":"ai-title","aiTitle":"x"}\n')
+        with quiet() as (out, _):
+            f.show_side("losing", p, f.line_set(p))
+        self.assertNotIn("!", out.getvalue())
+
+    def test_every_flagged_kind_says_what_it_is(self):
+        for kind, why in f.CONSEQUENTIAL.items():
+            with self.subTest(kind=kind):
+                self.assertTrue(why and not why.endswith("."), kind)
+
     def test_a_difference_of_pure_bookkeeping_says_so(self):
         """An `atis-latch` is Claude Code latching its own state. Reporting it
         as "1 record" sends you looking up an internal name to discover that
