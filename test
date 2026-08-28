@@ -2468,6 +2468,116 @@ class Confirm(unittest.TestCase):
         self.assertIn("--yes", err.getvalue())
 
 
+class Catalogue(unittest.TestCase):
+    """What a store holds, read from the transcripts rather than the filenames.
+
+    A session is identified by the id inside it; what the file is called is
+    storage. Reading fifty of them takes a second and a half and a listing
+    cannot, so the answer is kept - and because it is a cache, it records the
+    commit it was built from and is never trusted further than that.
+    """
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.repo = self.tmp / "store"
+        (self.repo / "sessions" / "p").mkdir(parents=True)
+        self.git("init", "-q")
+        self.git("config", "user.email", "t@e")
+        self.git("config", "user.name", "t")
+        self._cache = f.CACHE
+        f.CACHE = self.tmp / "cache"
+
+    def tearDown(self):
+        f.CACHE = self._cache
+
+    def git(self, *args):
+        return subprocess.run(["git", "-C", str(self.repo), *args],
+                              capture_output=True, text=True)
+
+    def add(self, sid, name, filename):
+        (self.repo / "sessions" / "p" / f"{filename}.jsonl").write_text(
+            f'{{"sessionId":"{sid}","type":"user","uuid":"u-{sid}"}}\n'
+            f'{{"type":"custom-title","customTitle":"{name}",'
+            f'"sessionId":"{sid}"}}\n')
+
+    def commit(self, message="x"):
+        self.git("add", "-A")
+        self.git("commit", "-qm", message)
+
+    def names(self):
+        return sorted(v["name"] for v in f.catalogue(self.repo).values())
+
+    def test_it_reads_the_name_from_inside(self):
+        self.add("aaaa", "alpha", "whatever-the-file-is-called")
+        self.commit()
+        self.assertEqual(self.names(), ["alpha"])
+
+    def test_the_path_is_recorded_not_assumed(self):
+        self.add("aaaa", "alpha", "not-the-name")
+        self.commit()
+        entry = f.catalogue(self.repo)["aaaa"]
+        self.assertEqual(entry["path"], "sessions/p/not-the-name.jsonl")
+
+    def test_an_unchanged_store_is_not_read_again(self):
+        self.add("aaaa", "alpha", "a")
+        self.commit()
+        self.assertEqual(self.names(), ["alpha"])
+        # the cache is what answers now, so a file changed behind git's back
+        # is not noticed - which is what makes it cheap
+        (self.repo / "sessions" / "p" / "a.jsonl").write_text(
+            '{"sessionId":"aaaa","type":"user","uuid":"u"}\n'
+            '{"type":"custom-title","customTitle":"renamed","sessionId":"aaaa"}\n')
+        self.assertEqual(self.names(), ["alpha"])
+        self.commit("now committed")
+        self.assertEqual(self.names(), ["renamed"])
+
+    def test_a_session_added(self):
+        self.add("aaaa", "alpha", "a"); self.commit()
+        self.add("bbbb", "beta", "b"); self.commit()
+        self.assertEqual(self.names(), ["alpha", "beta"])
+
+    def test_a_session_removed(self):
+        self.add("aaaa", "alpha", "a"); self.add("bbbb", "beta", "b")
+        self.commit()
+        self.git("rm", "-q", "sessions/p/a.jsonl"); self.commit()
+        self.assertEqual(self.names(), ["beta"])
+
+    def test_a_file_renamed_keeps_its_session(self):
+        """The whole point: a session is its id, so moving the file it lives in
+        changes where it is and nothing about what it is."""
+        self.add("aaaa", "alpha", "alpha"); self.commit()
+        self.git("mv", "sessions/p/alpha.jsonl", "sessions/p/aaaa.jsonl")
+        self.commit()
+        entry = f.catalogue(self.repo)["aaaa"]
+        self.assertEqual((entry["name"], entry["path"]),
+                         ("alpha", "sessions/p/aaaa.jsonl"))
+
+    def test_a_cached_commit_that_no_longer_exists(self):
+        """History can be rewritten under it. Nothing to diff against means
+        read everything, which is slow and right rather than fast and wrong."""
+        self.add("aaaa", "alpha", "a"); self.commit()
+        self.names()
+        f.catalogue_file(self.repo).write_text(json.dumps(
+            {"head": "0" * 40, "sessions": {"zz": {"name": "ghost",
+                                                   "path": "gone"}}}))
+        self.assertEqual(self.names(), ["alpha"])
+
+    def test_an_unreadable_cache(self):
+        self.add("aaaa", "alpha", "a"); self.commit()
+        self.names()
+        f.catalogue_file(self.repo).write_text("not json at all")
+        self.assertEqual(self.names(), ["alpha"])
+
+    def test_a_store_with_no_commits_yet(self):
+        self.assertEqual(self.names(), [])
+
+    def test_two_stores_do_not_share_a_catalogue(self):
+        other = self.tmp / "other"
+        (other / "sessions").mkdir(parents=True)
+        self.assertNotEqual(f.catalogue_file(self.repo),
+                            f.catalogue_file(other))
+
+
 class ForkMessages(unittest.TestCase):
     """What memory says when it will not join. Sessions are joined instead, so
     this is the only refusal left, and it has to say enough to act on."""

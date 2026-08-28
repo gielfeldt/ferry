@@ -2504,6 +2504,90 @@ def session_dirs(everything=False):
     return out
 
 
+CACHE = Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache") / "ferry"
+
+
+def head_of(repo):
+    """The store's current commit, or None if it has none yet."""
+    got = git(repo, "rev-parse", "HEAD", check=False)
+    return got.stdout.strip() if got.returncode == 0 else None
+
+
+def catalogue_file(repo):
+    """Where this store's catalogue is kept.
+
+    Named after the path rather than the alias, because an alias can be
+    renamed and a checkout cannot move without being re-added.
+    """
+    key = hashlib.sha1(str(repo.resolve()).encode()).hexdigest()[:16]
+    return CACHE / f"{key}.json"
+
+
+def read_sessions(repo, paths):
+    """id -> {name, path} for the given session paths, read from the files."""
+    found = {}
+    for rel in paths:
+        f = repo / rel
+        if not f.is_file():
+            continue
+        sid = session_id_of(f)
+        if sid:
+            found[sid] = {"name": session_name(f) or f.stem, "path": rel}
+    return found
+
+
+def catalogue(repo):
+    """Every session a store holds, as id -> {name, path}.
+
+    The store's filenames are not the answer to this - a session is identified
+    by the id inside it, and what the file is called is storage. So the
+    catalogue is read out of the transcripts, and kept because reading 50 of
+    them takes a second and a half and a listing cannot.
+
+    It is a cache, so it is never trusted: it records the commit it was built
+    from, and anything else is rebuilt. When the store has merely moved on, the
+    files git says changed are re-read and the rest are kept - one session per
+    commit, in practice, so the usual cost is one sha comparison and one file.
+    """
+    head = head_of(repo)
+    store = catalogue_file(repo)
+    was = {}
+    try:
+        was = json.loads(store.read_text())
+    except (OSError, ValueError):
+        pass
+
+    if was.get("head") == head and head is not None:
+        return was.get("sessions", {})
+
+    known = was.get("sessions", {})
+    changed = None
+    if known and was.get("head") and head:
+        moved = git(repo, "diff", "--name-only", was["head"], head,
+                    check=False)
+        if moved.returncode == 0:
+            changed = [line for line in moved.stdout.splitlines()
+                       if line.startswith(f"{SESSIONS}/")]
+
+    if changed is None:                     # no usable history to diff against
+        sessions = read_sessions(repo, [
+            str(f.relative_to(repo))
+            for f in sorted((repo / SESSIONS).rglob("*.jsonl"))])
+    else:
+        gone = {rel for rel in changed if not (repo / rel).is_file()}
+        sessions = {sid: e for sid, e in known.items()
+                    if e["path"] not in gone and e["path"] not in changed}
+        sessions.update(read_sessions(repo, [c for c in changed
+                                             if c not in gone]))
+
+    try:
+        store.parent.mkdir(parents=True, exist_ok=True)
+        store.write_text(json.dumps({"head": head, "sessions": sessions}))
+    except OSError:
+        pass                                # a cache that cannot be kept still works
+    return sessions
+
+
 def store_index():
     """Every session in every registered store, by the name it is filed under.
 
