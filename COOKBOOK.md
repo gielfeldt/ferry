@@ -342,22 +342,33 @@ conversation only makes sense with what it ran.
 
 ## Rename a session
 
-The store's filename is the name. Renaming locally does not move anything, so:
+Rename it and sync. There is nothing else to do:
 
 ```sh
 # in Claude Code
 /rename better-name
 
-ferry sync work:acme/better-name         # -> acme/better-name.jsonl
+ferry sync better-name
 ```
 
-The old file is still there under the old name. Remove it yourself:
+A store files a session under its **id**, not its name, so renaming moves
+nothing and leaves nothing behind. The name travels inside the transcript, and
+every listing reads it from there:
 
 ```sh
-cd ~/.local/share/ferry/work
-git rm acme/bug-hunt.jsonl
-git commit -m "renamed to better-name"
-git push
+ferry list work
+#   work:acme/better-name    1.2 MB  2026-08-17  in sync  ~/develop/acme:better-name
+```
+
+The one rule is that a folder holds one session per name. Renaming a session
+onto a name its folder already has is refused, naming both:
+
+```
+ferry: work:acme already has a session called 'better-name', and it is a
+       different conversation:
+       this one:  7c21e8b4-…
+       that one:  3f9a1c2e-…
+       /rename one of them, then sync again
 ```
 
 `ferry move` will not do this one. It keeps the leaf, so it can re-file a

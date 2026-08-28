@@ -62,6 +62,18 @@ and failed every CI run for a week. **Check the CI result, not only the local
 one** — `gh run list --workflow=test.yml` — because a suite that is green in
 front of you can be red where it matters.
 
+## Documentation changes with the code
+
+`README.md`, `COOKBOOK.md`, this file, `skills/ferry/SKILL.md` and ferry's own
+`--help` describe how ferry behaves, so a change to behaviour changes them in
+the **same commit**. Leaving them saying the old thing is not tidying left for
+later — it is a second bug, found by whoever trusts the docs.
+
+It has gone wrong twice: a `sessions` example showed a listing ferry has never
+printed, and the rename recipe told you to `git rm` a file by hand long after
+ferry had stopped needing it. `CLAUDE.md` says the same thing for anyone
+working here with Claude.
+
 ## Tests
 
 ```sh

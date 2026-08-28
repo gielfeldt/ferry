@@ -835,7 +835,7 @@ def render_markdown(jsonl, tools=False, media=None, out=sys.stdout):
     written out beside it when asked for.
     """
     name = session_name(jsonl) or jsonl.stem[:8]
-    # In a store the filename is the name, so the id has to come from inside -
+    # A store names its files after the id, so the name comes from inside -
     # which is where it lives anyway.
     sid = session_id_of(jsonl) or jsonl.stem
     shot = 0
@@ -1038,9 +1038,10 @@ def cmd_name(args):
     to open: an unnamed 12 MB conversation cannot be saved, and until now the
     only way to fix that was to start it up again.
 
-    Local sessions only. In a store the file is named after the session, so
-    naming one there would leave the two disagreeing - which is the thing
-    `move` refuses to do for the same reason.
+    Local sessions only, though not for the reason it used to be. A stored
+    session could be named in place now that the file is not called after its
+    name - but naming it here and syncing does the same thing and leaves both
+    copies agreeing, so there is nothing the store-side form would add.
     """
     if ":" in args.session and args.session.partition(":")[0] in repos():
         die("a session in a store cannot be named here - its filename is its "
@@ -1820,7 +1821,7 @@ def cmd_move(args):
     """Re-file something inside a store, keeping the name it already has.
 
     The destination is a directory and the leaf comes along unchanged, the same
-    way `sync` names the file after the session. That is not only symmetry: a
+    way `sync` names the file after the session id. That is not only symmetry:
     session's name lives inside its own transcript, so a move able to rename the
     file could make the two disagree. Not being able to say a new name means it
     cannot happen. To rename, /rename the session and sync it again.

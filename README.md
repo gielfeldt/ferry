@@ -185,11 +185,23 @@ almost nothing in the ordinary case: two copies that are in sync are identical
 files, and one that has been worked on since still opens with every byte the
 other has, so only a genuine fork is read in full.
 
-**A session is filed under its own name**, so one conversation has one name on
-every machine. The name comes from `/rename`, `/branch` or `claude -n`, and is
-recorded inside the transcript — so it travels with the session, and one that
-arrives from a store answers to it straight away. A session with no name cannot
-be sent; there would be nothing to call it.
+**A session is known by its name and stored under its id.** The name comes from
+`/rename`, `/branch` or `claude -n`, and is recorded inside the transcript — so
+it travels with the session, and one that arrives from a store answers to it
+straight away. A session with no name cannot be sent; there would be nothing to
+call it.
+
+The store files it under its **session id**, never its name. A name can change
+whenever you `/rename`, so it cannot also be where the file lives — that is how
+a store ends up filed under a name the session no longer has, and every machine
+that receives it then reports the session as stored nowhere. Storing by id also
+keeps your session names out of the store's filenames and commit messages,
+which git-crypt does not encrypt.
+
+You never see or type an id: `list`, `sessions`, `sync`, `diff`, `reset` and
+tab-completion all speak in names, read from inside the transcripts. **Within a
+folder a name means one session** — filing a second conversation under a name
+the folder already has is refused.
 
 `ferry name` sets one without resuming the session, by appending the record
 Claude Code would have written — which matters for an old conversation you want
@@ -266,10 +278,9 @@ favour of this machine's: that is a larger thing to do to a machine you are not
 sitting at, and `sync` already keeps both without being asked.
 
 **`move` re-files, it does not rename.** It takes a path and a directory, and
-the leaf goes along unchanged. A session's name lives inside its transcript, so
-a move that could rename the file would let the two disagree; not being able to
-say a new name means it cannot happen. To rename, `/rename` the session and
-sync it again.
+the leaf goes along unchanged — and the leaf is the session's id, so `move`
+cannot rename because the filename does not spell a name at all. To rename,
+`/rename` the session and sync it; nothing needs moving.
 
 **Memory belongs to a directory, not a session.** Claude keeps it in
 `memory/*.md` beside the transcripts, shared by everything started there. So
@@ -404,8 +415,10 @@ your clone has diverged.
 - **Collisions are caught, not resolved.** ferry stops and tells you.
 - **Nothing happens on its own.** No daemon, no watcher, no hook: ferry moves
   exactly what you name, when you name it.
-- **git-crypt hides contents, not names.** Directory and file names, sizes and
-  commit messages stay readable, so keep the store private.
+- **git-crypt hides contents, not names.** Sessions are filed under their ids
+  and commit messages name only the folder, so a session's name is not exposed
+  — but **folder names, memory note filenames, sizes and dates are**, so keep
+  the store private.
 
 ## Completion
 
