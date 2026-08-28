@@ -2483,6 +2483,63 @@ class Confirm(unittest.TestCase):
         self.assertIn("--yes", err.getvalue())
 
 
+class Layout(unittest.TestCase):
+    """The marker that says which ferry wrote a store.
+
+    Its whole purpose is the next format change, not this one: a ferry too old
+    to read a store should say so, rather than misreading it. The version
+    before this could not - shown an id-named session it reported the uuid as
+    the session's name and the session as stored nowhere.
+    """
+
+    def setUp(self):
+        self.repo = Path(tempfile.mkdtemp())
+
+    def test_a_store_with_no_marker_is_the_layout_before_it(self):
+        self.assertEqual(f.read_layout(self.repo), 1)
+
+    def test_marking_writes_the_layout(self):
+        self.assertEqual(f.mark_layout(self.repo), [f.MARKER])
+        self.assertEqual(f.read_layout(self.repo), f.LAYOUT)
+
+    def test_marking_twice_changes_nothing(self):
+        f.mark_layout(self.repo)
+        self.assertEqual(f.mark_layout(self.repo), [])
+
+    def test_the_marker_is_kept_readable_without_the_key(self):
+        """git-crypt encrypts everything by default, and a store you cannot
+        understand is exactly the case worth being able to read."""
+        (self.repo / ".gitattributes").write_text("* filter=git-crypt\n")
+        changed = f.mark_layout(self.repo)
+        self.assertIn(".gitattributes", changed)
+        self.assertIn(f"{f.MARKER}", (self.repo / ".gitattributes").read_text())
+
+    def test_it_does_not_rewrite_gitattributes_twice(self):
+        (self.repo / ".gitattributes").write_text("* filter=git-crypt\n")
+        f.mark_layout(self.repo)
+        self.assertNotIn(".gitattributes", f.mark_layout(self.repo))
+
+    def test_a_newer_store_is_refused(self):
+        (self.repo / f.MARKER).write_text(f"layout {f.LAYOUT + 1}\n")
+        with quiet() as (_, err), self.assertRaises(SystemExit):
+            f.check_layout(self.repo)
+        self.assertIn("newer ferry", err.getvalue())
+
+    def test_this_layout_is_fine(self):
+        f.mark_layout(self.repo)
+        f.check_layout(self.repo)
+
+    def test_an_older_store_is_fine(self):
+        """Reading does not depend on layout - a session is found by the id
+        inside it, whatever its file is called."""
+        f.check_layout(self.repo)
+
+    def test_an_unreadable_marker_is_not_a_newer_store(self):
+        (self.repo / f.MARKER).write_text("this is not a layout line\n")
+        f.check_layout(self.repo)
+        self.assertEqual(f.read_layout(self.repo), 1)
+
+
 class Catalogue(unittest.TestCase):
     """What a store holds, read from the transcripts rather than the filenames.
 

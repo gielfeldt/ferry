@@ -134,6 +134,69 @@ def registry(wait=5.0):
         fh.close()
 
 
+# What this ferry knows how to read. A store written by a newer ferry says so
+# in its marker, and this one stops rather than misreading it - which is what
+# the version before this one could not do, and why a store it did not
+# understand looked to it like a set of sessions named after uuids.
+LAYOUT = 2
+MARKER = ".ferry"
+
+
+def read_layout(repo):
+    """The layout a store was written for. 1 is before the marker existed."""
+    try:
+        for line in (repo / MARKER).read_text().splitlines():
+            if line.startswith("layout "):
+                return int(line.split()[1])
+    except (OSError, ValueError, IndexError):
+        pass
+    return 1
+
+
+def check_layout(repo):
+    """Refuse a store this ferry is too old to read.
+
+    Kept unencrypted so it can be read before the store is unlocked - a clone
+    that cannot be understood is exactly the case worth being told about.
+    """
+    found = read_layout(repo)
+    if found > LAYOUT:
+        die(f"{repo} was written by a newer ferry (store layout {found}, "
+            f"this one reads {LAYOUT}).\n"
+            f"       upgrade ferry:  curl -fsSL "
+            f"https://raw.githubusercontent.com/gielfeldt/ferry/main/install.sh"
+            f" | sh")
+
+
+def mark_layout(repo):
+    """Record the layout, and keep the marker readable without the key.
+
+    Returns the paths that need committing, which is nothing at all once a
+    store has been marked.
+    """
+    changed = []
+    marker = repo / MARKER
+    want = ("# The store layout ferry wrote this with. A ferry too old to read\n"
+            "# it will say so rather than guess at what it holds.\n"
+            f"layout {LAYOUT}\n")
+    if not marker.is_file() or marker.read_text() != want:
+        marker.write_text(want)
+        changed.append(MARKER)
+
+    # git-crypt encrypts everything by default, and this is the one thing worth
+    # reading without the key.
+    attrs = repo / ".gitattributes"
+    line = f"{MARKER}          !filter !diff"
+    try:
+        text = attrs.read_text()
+    except OSError:
+        text = ""
+    if text and MARKER not in text:
+        attrs.write_text(text.rstrip("\n") + "\n" + line + "\n")
+        changed.append(".gitattributes")
+    return changed
+
+
 def repo_dir(alias):
     r = repos().get(alias)
     if not r:
@@ -143,6 +206,7 @@ def repo_dir(alias):
     p = Path(r["path"])
     if not p.is_dir():
         die(f"{p} is gone - re-add it:  ferry add {alias} {r.get('url','')}")
+    check_layout(p)
     return p
 
 
@@ -553,6 +617,9 @@ def commit_push(repo, message, paths):
     there - and the whole point of this repo is that its contents are
     deliberate. `paths` are repo-relative and are the only things staged.
     """
+    # Whatever else is being written, the store says which layout wrote it -
+    # so a ferry too old to read it can say so instead of guessing.
+    paths = list(paths) + mark_layout(repo)
     for p in paths:
         # A path that is gone is a removal, and `git add` refuses a pathspec
         # matching nothing rather than staging one. Whatever removed it staged
