@@ -2483,7 +2483,101 @@ class Confirm(unittest.TestCase):
         self.assertIn("--yes", err.getvalue())
 
 
-class Layout(unittest.TestCase):
+class TheSuiteItself(unittest.TestCase):
+    """The suite has to be able to say it ran everything.
+
+    Two classes with the same name is not an error in Python - the second
+    replaces the first, and unittest then finds only one of them. Six tests
+    disappeared that way while this file was being edited, and the only symptom
+    was a count that went up by less than it should have.
+    """
+
+    def test_no_two_test_classes_share_a_name(self):
+        source = Path(__file__).read_text()
+        names = re.findall(r"^class (\w+)\(unittest\.TestCase\):", source,
+                           re.M)
+        doubled = sorted({n for n in names if names.count(n) > 1})
+        self.assertEqual(doubled, [],
+                         "a later class of this name hides an earlier one, and "
+                         "its tests stop running")
+
+
+class OneNamePerFolder(unittest.TestCase):
+    """A name means one session within a folder.
+
+    The filesystem used to enforce that - one file could have one name - and a
+    store keyed by id cannot, so it is said out loud. It is reachable by
+    renaming a session onto a name its folder already has, which is one
+    /rename away, and what it produced was two rows in `ferry list` with the
+    same ref and a refusal asking you to choose between two identical strings.
+    """
+
+    def setUp(self):
+        self.root = Path(tempfile.mkdtemp())
+        (self.root / "sessions" / "proj").mkdir(parents=True)
+        self._repos, self._cache = f.repos, f.CACHE
+        f.repos = lambda: {"s": {"path": str(self.root)}}
+        f.CACHE = self.root / ".cache"
+
+    def tearDown(self):
+        f.repos, f.CACHE = self._repos, self._cache
+
+    def stored(self, folder, sid, name):
+        d = self.root / "sessions" / folder
+        d.mkdir(parents=True, exist_ok=True)
+        (d / f"{sid}.jsonl").write_text(
+            f'{{"sessionId":"{sid}","uuid":"u-{sid}"}}\n'
+            f'{{"type":"custom-title","customTitle":"{name}",'
+            f'"sessionId":"{sid}"}}\n')
+
+    def sending(self, sid, name):
+        return tmpfile(f'{{"sessionId":"{sid}","uuid":"u-{sid}"}}\n'
+                       f'{{"type":"custom-title","customTitle":"{name}",'
+                       f'"sessionId":"{sid}"}}\n', name=sid)
+
+    def send(self, path, src):
+        args = argparse.Namespace(allow_plaintext=True, memory=False)
+        with quiet() as (out, err):
+            try:
+                f.sync_send(args, self.root, "s", path, src, None, "x")
+            except SystemExit:
+                pass
+        return out.getvalue() + err.getvalue()
+
+    def test_a_name_the_folder_already_has_is_refused(self):
+        self.stored("proj", "aaaa", "bug-hunt")
+        got = self.send("proj/bug-hunt", self.sending("bbbb", "bug-hunt"))
+        self.assertIn("already has a session called 'bug-hunt'", got)
+        self.assertIn("aaaa", got)
+        self.assertIn("bbbb", got)
+
+    def test_the_same_session_again_is_not_a_clash(self):
+        self.stored("proj", "aaaa", "bug-hunt")
+        got = self.send("proj/bug-hunt", self.sending("aaaa", "bug-hunt"))
+        self.assertNotIn("already has", got)
+
+    def test_another_folder_may_hold_the_name(self):
+        """The rule is per folder, as it was when the filesystem kept it."""
+        self.stored("proj", "aaaa", "bug-hunt")
+        got = self.send("elsewhere/bug-hunt", self.sending("bbbb", "bug-hunt"))
+        self.assertNotIn("already has", got)
+
+    def test_a_session_with_no_name_cannot_clash(self):
+        self.stored("proj", "aaaa", "bug-hunt")
+        src = tmpfile('{"sessionId":"bbbb","uuid":"u"}\n', name="bbbb")
+        self.assertNotIn("already has", self.send("proj/whatever", src))
+
+    def test_nothing_is_written_when_it_refuses(self):
+        self.stored("proj", "aaaa", "bug-hunt")
+        before = sorted(p.name for p in
+                        (self.root / "sessions" / "proj").iterdir())
+        self.send("proj/bug-hunt", self.sending("bbbb", "bug-hunt"))
+        self.assertEqual(sorted(p.name for p in
+                                (self.root / "sessions" / "proj").iterdir()),
+                         before)
+
+
+class StoreLayoutMarker(unittest.TestCase):
     """The marker that says which ferry wrote a store.
 
     Its whole purpose is the next format change, not this one: a ferry too old

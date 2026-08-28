@@ -1100,10 +1100,28 @@ def sync_send(args, repo, alias, path, src, dest, what):
     git-crypt does not encrypt.
     """
     check_encryption(repo, alias, args.allow_plaintext)
+    sid = session_id_of(src)
+    if not sid:
+        die(f"cannot tell which session {src} is - no id inside it")
+
+    # Within a folder a name means one session. That used to be the filesystem's
+    # doing - one file could have one name - and stored by id it has to be said.
+    # It is reachable by renaming a session onto a name its folder already has,
+    # which is one /rename away.
+    folder = path.rsplit("/", 1)[0] if "/" in path else ""
+    calling = session_name(src)
+    if calling:
+        for other, entry in sorted(catalogue(repo).items()):
+            if (other != sid and entry["name"] == calling
+                    and folder_of(entry) == folder):
+                die(f"{alias}:{folder or 'the top of the store'} already has a "
+                    f"session called '{calling}', and it is a different "
+                    f"conversation:\n"
+                    f"       this one:  {sid}\n"
+                    f"       that one:  {other}\n"
+                    f"       /rename one of them, then sync again")
+
     if dest is None:                        # not in this store yet
-        sid = session_id_of(src)
-        if not sid:
-            die(f"cannot tell which session {src} is - no id inside it")
         folder = path.rsplit("/", 1)[0] if "/" in path else ""
         dest = repo / SESSIONS / folder / f"{sid}.jsonl"
     leaf = str(dest.relative_to(repo))
@@ -1828,14 +1846,17 @@ def cmd_move(args):
         rel, name = src.relative_to(repo).as_posix(), None
         leaf = in_store(dst_path, memory=True)
     else:
-        src = repo / f"{in_store(src_path)}.jsonl"
-        if not src.is_file():
+        src = stored_at(repo, src_alias, src_path)
+        if src is None:
             # A folder rather than a session, which is how a whole project is
             # re-filed. Both live under the same tree, so one lookup covers it.
             src = repo / in_store(src_path)
             if not src.exists():
                 die(f"nothing at {src_alias}:{src_path}")
         rel = src.relative_to(repo).as_posix()
+        # The file keeps the name it has, which for a session is its id. That
+        # is the same promise as before said more plainly: move cannot rename,
+        # because the filename no longer spells a name at all.
         leaf = in_store(f"{dst_path}/{src.name}" if dst_path else src.name)
 
     dest = repo / leaf
@@ -1858,7 +1879,13 @@ def cmd_move(args):
 
     dest.parent.mkdir(parents=True, exist_ok=True)
     git(repo, "mv", "--", rel, leaf)
-    print(f"moved {src_alias}:{of_store(rel)} -> {src_alias}:{of_store(leaf)}")
+    # Say where it went in the words you would type, not in the words on disk:
+    # a session's file is named after its id and that is not what you call it.
+    what = session_name(dest) if dest.is_file() else None
+    landed = of_store(leaf)
+    if what:
+        landed = f"{Path(of_store(leaf)).parent}/{what}".lstrip("./")
+    print(f"moved {src_alias}:{src_path} -> {src_alias}:{landed}")
     commit_push(repo, f"move: {of_store(rel)} -> {of_store(leaf)}", [rel, leaf])
 
 
