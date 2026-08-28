@@ -742,8 +742,8 @@ def export_source(ref):
     head, _, tail = ref.partition(":")
     if head in repos():
         alias, path = split_ref(ref)
-        src = repo_dir(alias) / f"{in_store(path)}.jsonl"
-        if not src.is_file():
+        src = stored_at(repo_dir(alias), alias, path)
+        if src is None or not src.is_file():
             die(f"nothing at {ref}")
         return src
 
@@ -1023,14 +1023,29 @@ def cmd_export(args):
 
 
 def sync_send(args, repo, alias, path, src, dest, what):
-    """This directory's copy into the store. Only ever when it loses nothing."""
+    """This directory's copy into the store. Only ever when it loses nothing.
+
+    A session is stored under its id. The name is what you call it and what
+    every listing shows, but it lives inside the transcript and changes
+    whenever you rename - so it cannot also be where the file lives, or a
+    rename would leave the store pointing at something that no longer exists.
+    Storing by id also keeps the names out of a store's filenames, which
+    git-crypt does not encrypt.
+    """
     check_encryption(repo, alias, args.allow_plaintext)
-    leaf = f"{in_store(path)}.jsonl"
+    if dest is None:                        # not in this store yet
+        sid = session_id_of(src)
+        if not sid:
+            die(f"cannot tell which session {src} is - no id inside it")
+        folder = path.rsplit("/", 1)[0] if "/" in path else ""
+        dest = repo / SESSIONS / folder / f"{sid}.jsonl"
+    leaf = str(dest.relative_to(repo))
     dest.parent.mkdir(parents=True, exist_ok=True)
     delta = size_delta(src, dest)
     shutil.copyfile(src, dest)
     print(f"sent {what} -> {alias}:{path}  ({delta})")
-    commit_push(repo, f"session: {path}", [leaf])
+    # The message says where, not what: a store's commit log is not encrypted.
+    commit_push(repo, f"session: {folder_of({'path': leaf}) or 'top'}", [leaf])
 
 
 def sync_receive(alias, path, src, dest):
@@ -1513,8 +1528,8 @@ def both_copies(args, target):
     if args.memory:
         return alias, path, repo, here / "memory", \
             repo / in_store(path, memory=True)
-    theirs = repo / f"{in_store(path)}.jsonl"
-    if not theirs.exists():
+    theirs = stored_at(repo, alias, path)
+    if theirs is None:
         die(f"nothing at {alias}:{path}")
     sid = session_id_of(theirs)
     if not sid:
@@ -1653,10 +1668,10 @@ def sync_one(args, target, pulled=None):
         return sync_memory(args, repo, alias, path, here)
 
     name = path.rsplit("/", 1)[-1]
-    theirs = repo / f"{in_store(path)}.jsonl"
+    theirs = stored_at(repo, alias, path)
     mine = names_here(here).get(name)
 
-    if not theirs.exists():
+    if theirs is None:
         if mine is None:
             look = ("ferry sessions", f"ferry list {alias}")
             w = max(len(c) for c in look) + 3
@@ -1971,15 +1986,19 @@ def list_one(alias, path, memory):
             git(repo, "log", "--format=%x00%ad", "--date=short",
                 "--name-status", "-M", check=False).stdout) if sessions else {}
         index = local_index()
+        held = catalogue(repo)
+        by_path = {e["path"]: e for e in held.values()}
         rows = []
         for f in sessions:
             found = True
             disk = f.relative_to(repo).as_posix()
-            rel = of_store(disk)[:-6]
-            where, state, extra = local_state(f, f.stem, index)
-            rows.append((f"{alias}:{rel}", f.stat().st_size,
+            # The name comes from the catalogue, not the filename: a store
+            # names its files after the session id.
+            entry = by_path.get(disk, {"name": f.stem, "path": disk})
+            where, state, extra = local_state(f, entry["name"], index)
+            rows.append((ref_of(alias, entry), f.stat().st_size,
                          dates.get(disk, ""), where, state or "", extra,
-                         f.stem))
+                         entry["name"]))
         refs = max((len(r[0]) for r in rows), default=0)
         states = max((len(r[4]) for r in rows), default=0)
         for ref, size, when, where, state, extra, name in rows:
@@ -2101,8 +2120,9 @@ def store_refs(prefix, kind="any"):
     everything else the store has ever held.
 
     A folder comes back with a trailing slash, which with `complete -o nospace`
-    leaves the cursor ready to go deeper. What a stored session is called is
-    its filename, so nothing here needs decrypting to answer.
+    leaves the cursor ready to go deeper. Folders are read off the tree;
+    sessions come from the catalogue, because what a session is called is
+    inside it and the file is named after its id.
     """
     names = sorted(repos())
     if ":" not in prefix:
@@ -2135,8 +2155,12 @@ def store_refs(prefix, kind="any"):
                     out.append(f"{alias}:{rel}")
                 if kind != "memory" or any(c.is_dir() for c in f.iterdir()):
                     out.append(f"{alias}:{rel}/")
-            elif kind == "session" and f.suffix == ".jsonl":
-                out.append(f"{alias}:{rel[:-6]}")
+    # Sessions are not offered by filename - a store names them after their id,
+    # and the name lives inside. The catalogue already knows both.
+    if kind in ("session", "any"):
+        for _, entry in catalogue(root).items():
+            if folder_of(entry) == head:
+                out.append(ref_of(alias, entry))
     return sorted(set(c for c in out if c.startswith(prefix)))
 
 
@@ -2524,15 +2548,22 @@ def catalogue_file(repo):
 
 
 def read_sessions(repo, paths):
-    """id -> {name, path} for the given session paths, read from the files."""
+    """id -> {name, path} for the given session paths, read from the files.
+
+    A file that says no id is still listed, under its path and by whatever it
+    is called on disk. A locked git-crypt store is every file at once - it is
+    ciphertext, so nothing can be read out of it - and a store that looks empty
+    because it is locked would be a worse answer than one that lists what it
+    has and says it cannot read it.
+    """
     found = {}
     for rel in paths:
         f = repo / rel
         if not f.is_file():
             continue
         sid = session_id_of(f)
-        if sid:
-            found[sid] = {"name": session_name(f) or f.stem, "path": rel}
+        found[sid or f"?{rel}"] = {"name": session_name(f) or f.stem,
+                                   "path": rel, "readable": bool(sid)}
     return found
 
 
@@ -2588,22 +2619,52 @@ def catalogue(repo):
     return sessions
 
 
-def store_index():
-    """Every session in every registered store, by the name it is filed under.
+def folder_of(entry):
+    """The store folder a catalogued session sits in, '' for the top."""
+    rel = Path(entry["path"]).relative_to(SESSIONS).parent
+    return "" if str(rel) == "." else str(rel)
 
-    Filenames only - nothing is opened. A session keeps one name on every
-    machine, which is what makes a name enough to find its counterpart, and
-    what makes this cost nothing to build.
+
+def ref_of(alias, entry):
+    """What a catalogued session is called, as you would type it.
+
+    Folder plus the name from inside the transcript - never the filename, which
+    is storage and says nothing about which conversation this is.
+    """
+    folder = folder_of(entry)
+    return f"{alias}:{folder}/{entry['name']}" if folder \
+        else f"{alias}:{entry['name']}"
+
+
+def store_index():
+    """Every session in every registered store, by the name it answers to.
+
+    The name is read from inside the transcript rather than taken from the
+    filename, so a store may name its files whatever it likes - after the
+    session id, as it now does - without any of this changing.
     """
     found = {}
     for alias, r in sorted(repos().items()):
-        root = Path(r["path"]) / SESSIONS
-        if not root.is_dir():
-            continue
-        for p in sorted(root.rglob("*.jsonl")):
-            ref = f"{alias}:{p.relative_to(root).with_suffix('')}"
-            found.setdefault(p.stem, []).append((ref, p))
+        repo = Path(r["path"])
+        for _, entry in sorted(catalogue(repo).items(),
+                               key=lambda kv: kv[1]["path"]):
+            found.setdefault(entry["name"], []).append(
+                (ref_of(alias, entry), repo / entry["path"]))
     return found
+
+
+def stored_at(repo, alias, path):
+    """The file a <folder>/<name> ref points at in this store, or None.
+
+    Names are unique within a folder because ferry refuses to file a second
+    session under a name a folder already has - so at most one thing matches.
+    """
+    want = f"{alias}:{path}"
+    for _, entry in sorted(catalogue(repo).items(),
+                           key=lambda kv: kv[1]["path"]):
+        if ref_of(alias, entry) == want:
+            return repo / entry["path"]
+    return None
 
 
 def same_bytes(a, b):

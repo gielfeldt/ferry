@@ -1725,7 +1725,12 @@ class RefForName(unittest.TestCase):
     def stored(self, alias_path):
         p = self.root / "sessions" / f"{alias_path}.jsonl"
         p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text('{"sessionId":"x","uuid":"1"}\n')
+        # A store is catalogued by the id inside each transcript, so a
+        # fixture session needs one of its own.
+        leaf = alias_path.rsplit("/", 1)[-1]
+        p.write_text(f'{{"sessionId":"id-{leaf}","uuid":"u-{leaf}"}}\n'
+                     f'{{"type":"custom-title","customTitle":"{leaf}",'
+                     f'"sessionId":"id-{leaf}"}}\n')
 
     def test_one_store_entry_resolves(self):
         self.stored("acme/bug-hunt")
@@ -1805,7 +1810,12 @@ class SyncedRefs(unittest.TestCase):
     def stored(self, folder, name):
         d = self.root / "sessions" / folder
         d.mkdir(parents=True, exist_ok=True)
-        (d / f"{name}.jsonl").write_text('{"sessionId":"x","uuid":"1"}\n')
+        # Its own id: the store is catalogued by id, so two sessions
+        # sharing one would be two names for a single conversation.
+        (d / f"{name}.jsonl").write_text(
+            f'{{"sessionId":"id-{name}","uuid":"u-{name}"}}\n'
+            f'{{"type":"custom-title","customTitle":"{name}",'
+            f'"sessionId":"id-{name}"}}\n')
 
     def test_a_local_session_the_store_has_is_offered_by_name(self):
         self.local("abc", "bug-hunt")
@@ -2232,7 +2242,12 @@ class SyncEverything(unittest.TestCase):
     def stored(self, folder, name):
         d = self.root / "sessions" / folder
         d.mkdir(parents=True, exist_ok=True)
-        (d / f"{name}.jsonl").write_text('{"sessionId":"x","uuid":"1"}\n')
+        # Its own id: the store is catalogued by id, so two sessions
+        # sharing one would be two names for a single conversation.
+        (d / f"{name}.jsonl").write_text(
+            f'{{"sessionId":"id-{name}","uuid":"u-{name}"}}\n'
+            f'{{"type":"custom-title","customTitle":"{name}",'
+            f'"sessionId":"id-{name}"}}\n')
 
     def run_it(self):
         with quiet() as (out, err):
