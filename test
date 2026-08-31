@@ -2502,6 +2502,96 @@ class TheSuiteItself(unittest.TestCase):
                          "its tests stop running")
 
 
+class SyncMemoryNoTarget(unittest.TestCase):
+    """`ferry sync -m` with nothing after it.
+
+    It used to walk every session this directory had in a store and write the
+    directory's memory into a folder named after each - one invocation made 14
+    folders, 462 files, 14 commits, all pushed. The flag says which kind the
+    *target* is, and it was still set when the loop handed each session ref on.
+
+    Worse than the write was the read that followed: a memory folder is walked
+    recursively, so those subfolders counted as part of the memory itself, and
+    the next `sync --memory` would have merged them all back down into the one
+    directory whose notes get loaded into every session.
+    """
+
+    def setUp(self):
+        self.root = Path(tempfile.mkdtemp())
+        self.here = Path(tempfile.mkdtemp())
+        (self.root / "sessions" / "proj").mkdir(parents=True)
+        (self.root / "memories" / "proj").mkdir(parents=True)
+        (self.here / "memory").mkdir()
+        (self.here / "memory" / "note.md").write_text("a note\n")
+        self._repos, self._slug, self._cache = f.repos, f.slug_dir, f.CACHE
+        f.repos = lambda: {"s": {"path": str(self.root)}}
+        f.slug_dir = lambda where=None: self.here
+        f.CACHE = self.root / ".cache"
+        self.sent = []
+        self._one = f.sync_one
+        f.sync_one = lambda a, t, pulled=None: self.sent.append((t, a.memory))
+
+    def tearDown(self):
+        f.repos, f.slug_dir, f.CACHE = self._repos, self._slug, self._cache
+        f.sync_one = self._one
+
+    def stored(self, name, sid):
+        (self.root / "sessions" / "proj" / f"{sid}.jsonl").write_text(
+            f'{{"sessionId":"{sid}","uuid":"u-{sid}"}}\n'
+            f'{{"type":"custom-title","customTitle":"{name}",'
+            f'"sessionId":"{sid}"}}\n')
+        (self.here / f"{sid}.jsonl").write_text(
+            f'{{"sessionId":"{sid}","uuid":"u-{sid}"}}\n'
+            f'{{"type":"custom-title","customTitle":"{name}",'
+            f'"sessionId":"{sid}"}}\n')
+
+    def run_it(self, memory):
+        with quiet() as (out, err):
+            try:
+                f.sync_everything(argparse.Namespace(memory=memory,
+                                                     allow_plaintext=True))
+            except SystemExit:
+                pass
+        return out.getvalue() + err.getvalue()
+
+    def test_it_syncs_the_memory_and_nothing_else(self):
+        self.stored("alpha", "aaaa")
+        self.stored("beta", "bbbb")
+        self.run_it(memory=True)
+        self.assertEqual(self.sent, [("s:proj", True)])
+
+    def test_no_session_is_ever_handed_on_as_memory(self):
+        """The whole of the bug in one assertion: a session ref reaching
+        sync_one with memory set is what named a memory folder after it."""
+        self.stored("alpha", "aaaa")
+        self.stored("beta", "bbbb")
+        for memory in (True, False):
+            self.sent = []
+            self.run_it(memory=memory)
+            for target, was_memory in self.sent:
+                with self.subTest(target=target, memory=memory):
+                    self.assertFalse(was_memory and "/" in target.split(":")[1],
+                                     f"{target} was synced as memory")
+
+    def test_without_the_flag_both_kinds_go(self):
+        self.stored("alpha", "aaaa")
+        self.run_it(memory=False)
+        self.assertEqual(sorted(self.sent), [("s:proj", True),
+                                             ("s:proj/alpha", False)])
+
+    def test_memory_with_no_folder_to_infer_says_so(self):
+        got = self.run_it(memory=True)
+        self.assertIn("no one folder of a store", got)
+        self.assertEqual(self.sent, [])
+
+    def test_no_notes_at_all_says_that_instead(self):
+        (self.here / "memory" / "note.md").unlink()
+        self.stored("alpha", "aaaa")
+        got = self.run_it(memory=True)
+        self.assertIn("no notes here", got)
+        self.assertEqual(self.sent, [])
+
+
 class OneNamePerFolder(unittest.TestCase):
     """A name means one session within a folder.
 

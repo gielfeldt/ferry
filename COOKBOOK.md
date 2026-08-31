@@ -165,7 +165,8 @@ Memory belongs to the directory, not to any session:
 ```sh
 cd ~/develop/acme
 ferry memory                        # what is here
-ferry sync --memory work:acme       # the store's memory for acme
+ferry sync --memory                 # to wherever this directory's sessions live
+ferry sync --memory work:acme       # or name the folder yourself
 ```
 
 To read what the store holds before you take it, ask for memory rather than

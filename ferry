@@ -1445,6 +1445,11 @@ def sync_everything(args):
     A session no store has is left alone and said out loud. Where it should go
     is the one thing ferry cannot work out, and guessing a folder would file a
     conversation somewhere you did not choose.
+
+    With --memory it is this directory's notes and nothing else. Memory has no
+    name to look up, but it belongs to this directory, and the folder its
+    sessions already agree on is where it goes - which is not a guess about
+    anything new, only a reading of where everything here already lives.
     """
     here, index = slug_dir(), store_index()
     named = names_here(here)
@@ -1466,36 +1471,49 @@ def sync_everything(args):
                ref.split(":")[0] + ":" for _, ref in paired}
     memory_ref = folders.pop() if len(folders) == 1 else None
 
-    if not paired and not (memory_ref and any(mem.glob("*.md"))):
+    has_memory = memory_ref and any(mem.glob("*.md"))
+    if args.memory and not has_memory:
+        die("this directory's memory has no one folder of a store to go to.\n"
+            + ("       ferry sync --memory <store>:<dir>   to say which\n"
+               if any(mem.glob("*.md")) else
+               "       there are no notes here to sync\n")
+            + "       ferry memory                        what is here")
+    if not args.memory and not paired and not has_memory:
         die("nothing here is in a store yet.\n"
             "       ferry sessions                    what is here\n"
             "       ferry sync <store>:<dir>/<name>   to say where one goes")
 
     pulled, failed = set(), 0
-    for name, ref in paired:
-        try:
-            sync_one(args, ref, pulled)
-        except SystemExit:
-            # die() has already said what went wrong. One session that cannot
-            # be synced is not a reason to leave the rest of the directory
-            # behind.
-            failed += 1
-    if memory_ref and any(mem.glob("*.md")):
+    if not args.memory:
+        # Explicitly not memory. The flag says which kind the *target* is, and
+        # every one of these is a session - a caller that let --memory through
+        # here is what filed this directory's notes under each session's name.
+        sessions = argparse.Namespace(**{**vars(args), "memory": False})
+        for name, ref in paired:
+            try:
+                sync_one(sessions, ref, pulled)
+            except SystemExit:
+                # die() has already said what went wrong. One session that
+                # cannot be synced is not a reason to leave the rest of the
+                # directory behind.
+                failed += 1
+    if has_memory:
         try:
             sync_one(argparse.Namespace(**{**vars(args), "memory": True}),
                      memory_ref, pulled)
         except SystemExit:
             failed += 1
 
-    for name in alone:
-        print(f"  {name} is in no store - "
-              f"ferry sync <store>:<dir>/{name} to say where it goes")
-    for name in split:
-        print(f"  {name} is in more than one store - "
-              f"name the one you mean")
-    if not memory_ref and any(mem.glob("*.md")):
-        print("  memory here belongs to no one folder of a store - "
-              "ferry sync --memory <store>:<dir>")
+    if not args.memory:
+        for name in alone:
+            print(f"  {name} is in no store - "
+                  f"ferry sync <store>:<dir>/{name} to say where it goes")
+        for name in split:
+            print(f"  {name} is in more than one store - "
+                  f"name the one you mean")
+        if not memory_ref and any(mem.glob("*.md")):
+            print("  memory here belongs to no one folder of a store - "
+                  "ferry sync --memory <store>:<dir>")
     if failed:
         sys.exit(1)
 
@@ -1751,6 +1769,14 @@ def sync_one(args, target, pulled=None):
             pulled.add(repo)
 
     if args.memory:
+        # A session ref arriving here as memory is how `sync -m` with no target
+        # came to write this directory's memory into a folder named after every
+        # session it had. Callers are not trusted with the distinction, because
+        # this is the last place that can still tell them apart.
+        if stored_at(repo, alias, path) is not None:
+            die(f"{alias}:{path} is a session, not a folder of memory.\n"
+                f"       ferry sync {alias}:{path}            the session\n"
+                f"       ferry sync --memory {alias}:<dir>   a folder's notes")
         return sync_memory(args, repo, alias, path, here)
 
     name = path.rsplit("/", 1)[-1]
@@ -2973,7 +2999,7 @@ USAGE = """\
   ferry name <session>|<dir>:<session> <name>
   ferry memory [<dir>] [--global]
   ferry sync [<session>|<store>:<path>]   without either, everything here
-  ferry sync --memory <store>:<dir>
+  ferry sync --memory [<store>:<dir>]     without one, this directory's
   ferry diff <session>|<store>:<path> [--memory]
   ferry reset <session>|<store>:<path> [--memory] [--yes]
   ferry move <store>:<path> <store>:<dir> [--force]
@@ -3008,7 +3034,8 @@ examples:
     ferry sync                                    everything here, both kinds
     ferry sync bug-hunt                           one session, once stored
     ferry sync work:acme/bug-hunt                 the first time, to say where
-    ferry sync --memory work:acme                 that folder's notes
+    ferry sync --memory                           this directory's notes
+    ferry sync --memory work:acme                 to a folder you name
     ferry diff bug-hunt                           what each copy has alone
     ferry reset bug-hunt                          take the store's, losing mine
     ferry list work                               what the store holds

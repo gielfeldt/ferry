@@ -82,7 +82,7 @@ ferry sessions [<dir>] [--global] [--all]
 ferry name <session>|<dir>:<session> <name>
 ferry memory [<dir>] [--global]
 ferry sync [<session>|<store>:<path>]
-ferry sync --memory <store>:<dir>
+ferry sync --memory [<store>:<dir>]
 ferry move <store>:<path> <store>:<dir> [--force]
 ferry move --memory <store>:<dir> <store>:<dir> [--force]
 ferry export <session>|<store>:<path>|<dir>:<session>
@@ -112,7 +112,8 @@ ferry memory --global                         # every directory that remembers
 ferry sync                                    # everything here, both kinds
 ferry sync bug-hunt                           # one session, once stored
 ferry sync work:acme/bug-hunt                 # the first time, to say where
-ferry sync --memory work:acme                 # that folder's notes
+ferry sync --memory                           # this directory's notes
+ferry sync --memory work:acme                 # to a folder you name
 ferry diff bug-hunt                           # what each copy has alone
 ferry reset bug-hunt                          # take the store's, losing mine
 
