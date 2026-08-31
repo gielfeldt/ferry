@@ -1,2 +1,6 @@
 __pycache__/
 *.pyc
+
+# Notes, bug reports and scratch work kept beside the checkout rather than in
+# it - useful to have to hand, not part of what ferry is.
+.work/
